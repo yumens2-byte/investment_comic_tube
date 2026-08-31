@@ -12,12 +12,57 @@ from __future__ import annotations
 
 import logging
 import os
+import random
 import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 SEGMENT_DURATION_SEC = 4
+
+BGM_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
+
+
+def _find_bgm() -> str | None:
+    """BGM 디렉터리에서 배경음 파일을 하나 무작위로 고른다.
+
+    파일이 없으면 None -- 이 경우 영상은 기존과 동일하게 무음으로 남는다.
+    저작권 리스크를 피하기 위해 코드가 음원을 자동으로 받아오지 않는다.
+    마스터가 라이선스를 확보한 파일을 assets/bgm/ 에 넣으면 그때부터 적용된다.
+    무작위 선택은 X 안티봇 원칙(동일 패턴 반복 금지)에 따른 것이다.
+    """
+    bgm_dir = Path(os.getenv("BGM_DIR", "assets/bgm"))
+    if not bgm_dir.is_dir():
+        return None
+    candidates = sorted(p for p in bgm_dir.iterdir() if p.suffix.lower() in BGM_EXTENSIONS)
+    if not candidates:
+        return None
+    return str(random.choice(candidates))
+
+
+def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
+    """완성된 영상의 무음 트랙을 BGM으로 교체한다. 실패 시 원본을 그대로 둔다."""
+    mixed_path = f"{video_path}.bgm.mp4"
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-stream_loop", "-1", "-i", bgm_path,
+        "-map", "0:v:0", "-map", "1:a:0",
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+        "-af", "volume=0.35",
+        "-shortest",
+        mixed_path,
+    ]
+    try:
+        _run_ffmpeg(cmd, ffmpeg_log, append=True)
+    except Exception as e:  # noqa: BLE001 - BGM 합성 실패는 무음 원본으로 폴백
+        logger.warning("bgm_mix_failed reason=%s: %s -- keeping silent audio", type(e).__name__, e)
+        if os.path.exists(mixed_path):
+            os.remove(mixed_path)
+        return
+
+    os.replace(mixed_path, video_path)
+    logger.info("bgm_applied source=%s", bgm_path)
 
 
 def _escape_drawtext(text: str) -> str:
@@ -135,6 +180,12 @@ def render_video(script_data: dict, image_paths: list[str] | None = None) -> str
             _render_text_card(script_data, output_path, ffmpeg_log)
     else:
         _render_text_card(script_data, output_path, ffmpeg_log)
+
+    bgm_path = _find_bgm()
+    if bgm_path:
+        _apply_bgm(output_path, bgm_path, ffmpeg_log)
+    else:
+        logger.info("bgm_skipped reason=no_bgm_file -- video stays silent")
 
     logger.info(
         "render_finished output=%s bytes=%s ffmpeg_log=%s",

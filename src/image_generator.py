@@ -15,6 +15,8 @@ import logging
 import os
 from pathlib import Path
 
+from src.characters import HERO_APPEARANCE, get_villain_appearance
+
 logger = logging.getLogger(__name__)
 
 IMAGE_MODEL = "gemini-3.1-flash-image"
@@ -24,10 +26,17 @@ def _build_prompt(script_data: dict) -> str:
     villain = script_data.get("villain", "Unknown")
     theme = script_data.get("theme", "")
     return (
-        "Vertical 9:16 comic-style illustration for a financial-market story called "
-        f"'EDT Universe'. A heroic trader character confronting the antagonist "
-        f"'{villain}'. Theme: {theme}. Dramatic market battle scene. "
-        "No text, no logos, no watermarks."
+        "Vertical 9:16 comic-style illustration for a financial-market story "
+        "called 'EDT Universe'. "
+        f"{HERO_APPEARANCE} "
+        f"{get_villain_appearance(villain)} "
+        f"The tiger hero confronts {villain} in a dramatic market battle scene. "
+        f"Theme: {theme}. "
+        "CRITICAL: the image must contain absolutely NO text, NO letters, NO words, "
+        "NO numbers, NO captions, NO speech bubbles, NO signage, NO watermarks and "
+        "NO logos of any kind, in any language. Purely visual illustration only. "
+        "Leave the bottom third of the image visually simple, with no important "
+        "subject matter, so a caption can be overlaid there later."
     )
 
 
