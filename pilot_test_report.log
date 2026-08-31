@@ -1,0 +1,39 @@
+# Episode Ingestion Pilot Test Report
+
+Date: 2026-08-31 UTC
+Fixture: tests/fixtures/episode_sample.json
+
+## Result
+
+PASS (local ingestion and mocked Supabase contract)
+
+- Parsed episode: EP-20260826-02
+- Normalized duration: 30.0 seconds
+- Sequence count: 3
+- Content SHA-256: 9fc7c18e67fce1a398ca400515052e24427184b26c7ff9071bb12343f5a35872
+- Resulting state: SCRIPT_READY
+- Unit/adapter tests: 6 passed
+
+## Verified failure cases
+
+- Episode ID date and market date mismatch
+- Video prompt without 9:16 orientation
+- Total sequence duration outside 15-60 seconds
+
+## External integration status
+
+Supabase request construction and upsert behavior were verified with a mocked HTTP response. A live write was
+not attempted because SUPABASE_URL and SUPABASE_KEY were not present in the process environment. Apply
+supabase/migrations/001_create_episodes.sql and inject both variables into a trusted shell/CI environment before
+running `python scripts/run_pilot.py tests/fixtures/episode_sample.json --backend supabase`.
+
+## 2026-08-31 Logging/OAuth regression
+
+PASS (10 unit/adapter tests)
+
+- Rotating `pipeline.log` creation and UTF-8 event persistence verified.
+- FFmpeg stdout/stderr isolation into `ffmpeg.log` verified with a subprocess fixture.
+- Missing FFmpeg executable produces both a traceback in `pipeline.log` and an actionable `ffmpeg.log`.
+- Revoked refresh token fixture produces `YouTubeAuthenticationError` with re-authorization guidance.
+- Missing video is no longer reported as a mock upload success.
+- Live YouTube upload was not attempted; replacing the revoked Actions secret requires channel-owner OAuth.

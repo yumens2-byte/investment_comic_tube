@@ -1,0 +1,39 @@
+{
+  "episode_id": "EP-20260826-02",
+  "data_summary": {
+    "date": "2026-08-26",
+    "DGS10": "4.62%",
+    "VIX": "15.45",
+    "NASDAQ_change": "+0.66%",
+    "S&P500_change": "+0.32%",
+    "DOW_change": "+0.30%"
+  },
+  "narrative_theme": {
+    "antagonist": "데트 타이탄 (Debt Titan)",
+    "theme_type": "TACTICAL_ASSAULT",
+    "core_conflict": "국채금리의 4.6%대 하향 안정세와 엔비디아 실적 발표를 앞둔 반도체 중심의 기술주 반등 속에서, 부채의 장벽을 향해 돌진하는 수호자 EDT의 전술적 공세"
+  },
+  "sequence_pipeline": [
+    {
+      "sequence_id": "Seq_1",
+      "duration": "10s",
+      "caption": "국채금리 안정\n유효 자금의 유입",
+      "narration_tts": "10년물 국채금리가 4.6%대로 내려앉으며 시장의 숨통이 트이고, 채권 시장에서 풀려난 유동성이 새로운 기회를 만들어냅니다.",
+      "video_prompt": "Masterpiece cinematic full shot of EDT Form2, an anthropomorphic tiger warrior with vibrant orange and black striped fur. He is encased in heavy, battle-worn dark steel and aged bronze Roman plate armor, complete with a dark red cape resting still. Face is a calm, tense tiger. Eyes flash with blinding platinum-white light emission (no pupils). Holding a massive industrial metal chainsaw weapon at rest. Saturated gold-white liquid energy flows intensely from all armor seams and the prominent 'D' chest emblem. NO golden metal plates, NO gold armor surfaces, armor material is dark steel and bronze only, high contrast Manhwa shading, 8K, highly detailed armor texture, cinematic mood. 9:16 vertical orientation. [Foreground: EDT Form2 standing steady and observant on a high-tech fortress wall] vs [Background: Colossal, jagged antagonist construct named Debt Titan, framed by tightening obsidian chains under a calm twilight sky, ZERO organic elements, faceless horned obsidian rock entity], maintaining exact visual design, character features, color palette, and environmental lighting from the master reference image, 8k Resolution, locked continuity, temporal coherence, dynamic camera angles, evolving particle effect variations."
+    },
+    {
+      "sequence_id": "Seq_2",
+      "duration": "10s",
+      "caption": "반도체 랠리\n사슬을 치는 검격",
+      "narration_tts": "반도체와 빅테크가 강력하게 반등하며 전선을 돌파합니다. 수호자의 무기가 빛을 발하며 부채의 사슬을 강타합니다.",
+      "video_prompt": "Masterpiece cinematic full shot of EDT Form2, an anthropomorphic tiger warrior with vibrant orange and black striped fur. He is encased in heavy, battle-worn dark steel and aged bronze Roman plate armor, complete with a dark red cape billowing behind him. Face is a focused, fierce tiger. Eyes flash with blinding platinum-white light emission (no pupils). Holding a massive industrial metal chainsaw weapon roaring with blazing gold-white plasma arcs, striking forward. Saturated gold-white liquid energy flows intensely from all armor seams and the prominent 'D' chest emblem. NO golden metal plates, NO gold armor surfaces, armor material is dark steel and bronze only, high contrast Manhwa shading, 8K, highly detailed armor texture, cinematic mood. 9:16 vertical orientation. [Foreground: EDT Form2 swinging his glowing weapon into a powerful diagonal arc] vs [Background: Colossal, jagged antagonist construct named Debt Titan, its heavy chains snapping and fracturing violently under the energy impact, ZERO organic elements, faceless horned obsidian rock entity], maintaining exact visual design, character features, color palette, and environmental lighting from the master reference image, 8k Resolution, locked continuity, temporal coherence, dynamic camera angles, evolving particle effect variations."
+    },
+    {
+      "sequence_id": "Seq_3",
+      "duration": "10s",
+      "caption": "3대 지수 상승\n상승장의 여명",
+      "narration_tts": "나스닥과 S&P500이 일제히 상승하며 랠리를 이어갑니다. 수호자의 시선 끝에 찬란한 미래의 시장이 열립니다.",
+      "video_prompt": "Masterpiece cinematic full shot of EDT Form2, an anthropomorphic tiger warrior with vibrant orange and black striped fur. He is encased in heavy, battle-worn dark steel and aged bronze Roman plate armor, complete with a dark red cape resting gracefully. Face is a majestic, determined tiger. Eyes flash with blinding platinum-white light emission (no pupils). Holding his massive industrial metal chainsaw weapon downward, standing tall. Saturated gold-white liquid energy glows steadily from all armor seams and the prominent 'D' chest emblem. NO golden metal plates, NO gold armor surfaces, armor material is dark steel and bronze only, high contrast Manhwa shading, 8K, highly detailed armor texture, cinematic mood. 9:16 vertical orientation. [Foreground: EDT Form2 standing triumphant on a skyscraper apex] vs [Background: Debt Titan's remnants fading into stardust, overlooking a sprawling, radiant futuristic city gleaming under a bright rising sun, ZERO organic elements], maintaining exact visual design, character features, color palette, and environmental lighting from the master reference image, 8k Resolution, locked continuity, temporal coherence, dynamic camera angles, evolving particle effect variations."
+    }
+  ]
+}

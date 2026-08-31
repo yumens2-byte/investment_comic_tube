@@ -36,6 +36,19 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           GOOGLE_ACCESS_TOKEN: ${{ secrets.GOOGLE_ACCESS_TOKEN }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          LOG_DIR: logs
+          YOUTUBE_DEFAULT_PRIVACY: private
         run: |
           export PYTHONPATH=$(pwd)
           python main.py
+
+      - name: Upload pipeline diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            logs/
+            output_short.mp4
+          if-no-files-found: warn
+          retention-days: 14

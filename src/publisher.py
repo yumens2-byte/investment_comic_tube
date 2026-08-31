@@ -1,10 +1,19 @@
+import logging
 import os
-import time
+from google.auth.exceptions import RefreshError
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
+
+
+logger = logging.getLogger(__name__)
+
+
+class YouTubeAuthenticationError(RuntimeError):
+    """Raised when YouTube OAuth credentials need operator action."""
+
 
 def get_youtube_service():
     client_id = os.environ.get("YOUTUBE_CLIENT_ID")
@@ -12,7 +21,7 @@ def get_youtube_service():
     refresh_token = os.environ.get("YOUTUBE_REFRESH_TOKEN")
 
     if not all([client_id, client_secret, refresh_token]):
-        print("[Publisher] Warning: YouTube API 환경변수가 없습니다. (로컬/Mock 테스트 모드 전환)")
+        logger.warning("youtube_credentials_missing upload_skipped=true")
         return None
 
     credentials = Credentials(
@@ -20,18 +29,24 @@ def get_youtube_service():
         client_id=client_id, client_secret=client_secret,
         scopes=["https://www.googleapis.com/auth/youtube.upload"]
     )
-    credentials.refresh(Request())
+    try:
+        credentials.refresh(Request())
+    except RefreshError as exc:
+        logger.error(
+            "youtube_oauth_refresh_failed action=replace_YOUTUBE_REFRESH_TOKEN reason=invalid_grant"
+        )
+        raise YouTubeAuthenticationError(
+            "YouTube refresh token is expired or revoked. Re-authorize the channel and "
+            "replace the YOUTUBE_REFRESH_TOKEN GitHub Actions secret."
+        ) from exc
     return build("youtube", "v3", credentials=credentials)
 
 def upload_to_youtube(video_path, metadata):
     title = f"[EDT Universe] Ep.{metadata.get('episode')} {metadata.get('villain')}의 공습! #Shorts"[:95]
-    print(f"[Publisher] 유튜브 업로드 준비: '{title}'")
+    logger.info("youtube_upload_preparing title=%r", title)
     
     if not os.path.exists(video_path):
-        print(f"[Publisher] (Test Mode) 가상 파일 업로드 시뮬레이션: {video_path}")
-        print(f"[Publisher] 업로드 진행률: 100%")
-        print(f"[Publisher] ✅ 유튜브 업로드 성공! URL: https://youtu.be/mock_test_video_id")
-        return "mock_test_video_id"
+        raise FileNotFoundError(f"Video file does not exist: {video_path}")
 
     youtube = get_youtube_service()
     if not youtube:
@@ -44,17 +59,24 @@ def upload_to_youtube(video_path, metadata):
             "tags": ["EDT", "Shorts", "미국증시", metadata.get("villain")],
             "categoryId": "27"
         },
-        "status": {"privacyStatus": "public", "selfDeclaredMadeForKids": False}
+        "status": {
+            "privacyStatus": os.getenv("YOUTUBE_DEFAULT_PRIVACY", "private"),
+            "selfDeclaredMadeForKids": False,
+        }
     }
 
     media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=1024*1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
     
     response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"[Publisher] 업로드 진행률: {int(status.progress() * 100)}%")
+    try:
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                logger.info("youtube_upload_progress percent=%s", int(status.progress() * 100))
+    except HttpError:
+        logger.exception("youtube_upload_failed")
+        raise
 
-    print(f"[Publisher] ✅ 유튜브 업로드 성공! URL: https://youtu.be/{response.get('id')}")
+    logger.info("youtube_upload_finished video_id=%s", response.get("id"))
     return response.get("id")
