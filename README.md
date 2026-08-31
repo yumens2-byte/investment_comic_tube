@@ -66,3 +66,22 @@ python main.py
 
 현재 코드는 이 모드 분리를 아직 지원하지 않습니다. 구현 순서는 아키텍처 문서의
 Phase 1부터 따르는 것을 권장합니다.
+
+## 수집 파일럿 실행
+
+제공된 에피소드 샘플을 계약 검증한 뒤 로컬 산출물 또는 Supabase에 멱등 upsert할 수 있습니다.
+
+```bash
+# 외부 쓰기 없는 기본 파일럿
+python scripts/run_pilot.py tests/fixtures/episode_sample.json
+
+# Supabase SQL Editor에서 최초 한 번 migration 적용 후 실행
+# supabase/migrations/001_create_episodes.sql
+export SUPABASE_URL='https://<project>.supabase.co'
+export SUPABASE_KEY='<server-side-key>'
+python scripts/run_pilot.py tests/fixtures/episode_sample.json --backend supabase
+```
+
+로컬 실행은 `artifacts/<episode_id>/episode.json`과 해시·상태를 담은 `manifest.json`을 생성합니다.
+Supabase 실행은 `episode_id` 충돌 시 같은 행을 갱신하므로 네트워크 재시도로 행이 중복되지 않습니다.
+`SUPABASE_KEY`는 브라우저 코드나 로그에 노출하지 마세요.

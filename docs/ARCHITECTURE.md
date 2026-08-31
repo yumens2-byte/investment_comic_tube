@@ -287,3 +287,39 @@ FastAPI 관리자 화면으로 감싼다.
 | 7 | CI와 운영 문서 | lint/test workflow, runbook | 0.5일 |
 
 이 순서에서는 콘텐츠 생성 품질보다 먼저 “잘못 공개되지 않고, 중복 실행되지 않는” 기반을 만든다.
+
+## 12. 착수 구현: Episode Ingestion Pilot
+
+이번 파일럿은 제공된 `EP-20260826-02` 샘플을 실제 대본 생성 단계의 입력 계약으로 채택한다.
+
+### 모듈 상세
+
+| 모듈 | 입력 | 출력/책임 |
+|---|---|---|
+| `src.episode` | 생성된 JSON object | ID/날짜/퍼센트/시퀀스/길이/9:16 프롬프트 검증 및 typed model |
+| `LocalEpisodeRepository` | 검증된 Episode | 원본 JSON과 SHA-256 manifest를 원자적 작업 디렉터리에 보관 |
+| `SupabaseEpisodeRepository` | 검증된 Episode | PostgREST `episode_id` 기준 upsert, HTTP 오류 전파 |
+| `scripts/run_pilot.py` | JSON 경로, backend | 검증·저장 결과를 기계 판독 가능한 한 줄 JSON으로 출력 |
+
+검증은 외부 저장보다 반드시 먼저 수행된다. ID의 날짜와 시장 기준일이 같아야 하고, 퍼센트 값은
+명시적으로 `%`를 가져야 하며, 시퀀스 ID는 `Seq_1`부터 연속이어야 한다. 각 장면은 1~20초,
+전체 영상은 Shorts 범위인 15~60초이고 프롬프트에는 `9:16`이 명시돼야 한다.
+
+### Supabase 저장 계약
+
+`supabase/migrations/001_create_episodes.sql`은 원본 payload(JSONB), 정규화한 날짜/길이, 현재 상태,
+내용 해시와 승인/YouTube 필드를 저장한다. `episode_id`가 PK이고 REST 요청도 같은 키로 upsert하므로
+동일 입력을 재처리해도 행이 늘지 않는다. 테이블은 RLS를 활성화하되 공개 policy를 만들지 않는다.
+파일럿 worker의 키는 오직 신뢰된 서버/CI에만 주입한다.
+
+### 파일럿 통과 기준
+
+1. 제공 샘플이 30초/3개 시퀀스로 파싱되고 `SCRIPT_READY` manifest가 생성된다.
+2. 날짜 불일치, 9:16 누락, 15초 미만 입력이 외부 저장 전에 거부된다.
+3. 같은 JSON의 SHA-256이 매 실행 동일하다.
+4. Supabase 어댑터가 `episode_id` 충돌 병합 헤더와 함께 요청하고 HTTP 오류를 숨기지 않는다.
+5. 실제 Supabase 연결 시험은 migration 적용과 server-side key 확인 후 별도 수행한다.
+
+이 파일럿은 아직 Gemini 생성, 이미지/TTS 제작, 영상 렌더링, 승인 또는 YouTube 게시를 실행하지
+않는다. 해당 기능을 한 번에 연결하지 않고 검증된 `SCRIPT_READY` 레코드를 다음 단계의 유일한
+입력으로 사용한다.
