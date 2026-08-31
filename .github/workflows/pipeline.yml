@@ -56,6 +56,7 @@ jobs:
           GOOGLE_ACCESS_TOKEN: ${{ secrets.GOOGLE_ACCESS_TOKEN }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           LOG_DIR: logs
+          #공개여부 private 비공개, public 공개 , unlisted 링크아는사람만
           YOUTUBE_DEFAULT_PRIVACY: private
         run: |
           export PYTHONPATH=$(pwd)
