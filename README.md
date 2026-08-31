@@ -85,3 +85,14 @@ python scripts/run_pilot.py tests/fixtures/episode_sample.json --backend supabas
 로컬 실행은 `artifacts/<episode_id>/episode.json`과 해시·상태를 담은 `manifest.json`을 생성합니다.
 Supabase 실행은 `episode_id` 충돌 시 같은 행을 갱신하므로 네트워크 재시도로 행이 중복되지 않습니다.
 `SUPABASE_KEY`는 브라우저 코드나 로그에 노출하지 마세요.
+
+## 실행 로그와 OAuth 장애 대응
+
+파이프라인 실행 시 `logs/pipeline.log`에 단계별 로그가 기록되고 FFmpeg 전체 출력은
+`logs/ffmpeg.log`에 분리됩니다. GitHub Actions는 성공 여부와 관계없이 두 로그와 생성 영상을
+14일 동안 artifact로 보관합니다.
+
+`invalid_grant: Token has been expired or revoked`는 렌더링 오류가 아니라 YouTube refresh token이
+만료·취소된 인증 오류입니다. Google OAuth 동의 절차로 채널을 다시 인증하고 repository의
+`YOUTUBE_REFRESH_TOKEN` Actions secret을 새 값으로 교체한 뒤 workflow를 재실행해야 합니다.
+로그에는 token 값이 기록되지 않습니다. 업로드 기본 공개 범위는 안전을 위해 `private`입니다.

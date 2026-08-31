@@ -152,6 +152,8 @@ activemq-data/
 .envrc
 artifacts/
 data/
+logs/
+output_short.mp4
 .venv
 env/
 venv/

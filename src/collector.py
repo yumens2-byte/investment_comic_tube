@@ -1,7 +1,12 @@
+import logging
+
 import yfinance as yf
 
+
+logger = logging.getLogger(__name__)
+
 def fetch_market_data():
-    print("[Collector] 미국 거시경제 지표 종가 수집 시작...")
+    logger.info("market_collection_started")
     tickers = {"TNX": "^TNX", "VIX": "^VIX", "NASDAQ": "^IXIC"}
     data = {}
     for name, ticker in tickers.items():
@@ -16,8 +21,8 @@ def fetch_market_data():
             else:
                 data[name] = {"close": 0.0, "change_pct": 0.0}
         except Exception as e:
-            print(f"[Collector] Error fetching {name}: {e}")
+            logger.exception("market_collection_failed ticker=%s", name)
             data[name] = {"close": 0.0, "change_pct": 0.0}
             
-    print(f"[Collector] 데이터 수집 완료: {data}")
+    logger.info("market_collection_finished data=%s", data)
     return data

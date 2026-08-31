@@ -323,3 +323,19 @@ FastAPI 관리자 화면으로 감싼다.
 이 파일럿은 아직 Gemini 생성, 이미지/TTS 제작, 영상 렌더링, 승인 또는 YouTube 게시를 실행하지
 않는다. 해당 기능을 한 번에 연결하지 않고 검증된 `SCRIPT_READY` 레코드를 다음 단계의 유일한
 입력으로 사용한다.
+
+## 13. GitHub Actions 진단 로그 설계
+
+- `pipeline.log`: UTC 시각, severity, logger, event와 단계별 context를 기록한다. 5 MiB 단위로
+  회전하며 기본 3개 백업을 유지한다.
+- `ffmpeg.log`: FFmpeg 명령, stdout, stderr 전문을 저장한다. 정상 인코딩의 프레임 통계가 Python
+  예외와 섞이지 않도록 별도 파일로 둔다.
+- workflow의 `Upload pipeline diagnostics` 단계는 `if: always()`로 실행되어 실패한 run에서도
+  `logs/`와 렌더링 결과를 다운로드할 수 있다.
+- Python 최상위 경계는 처리하지 못한 예외의 traceback을 `pipeline.log`에 남긴 후 exit code 1을
+  반환한다. 성공처럼 위장하지 않되 진단 자료가 사라지지 않는다.
+- OAuth `invalid_grant`는 재시도 가능한 업로드 장애가 아니라 운영자 조치가 필요한 인증 장애로
+  분류한다. 비밀 값 없이 `replace_YOUTUBE_REFRESH_TOKEN` 조치를 로그에 남긴다.
+
+현재 workflow 파일은 대소문자만 다른 중복 정의를 제거해 한 번의 schedule이 업로드를 두 번
+실행할 위험을 없앴다. YouTube 게시 기본값도 `private`로 강제한다.

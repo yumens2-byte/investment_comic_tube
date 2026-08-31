@@ -26,3 +26,14 @@ Supabase request construction and upsert behavior were verified with a mocked HT
 not attempted because SUPABASE_URL and SUPABASE_KEY were not present in the process environment. Apply
 supabase/migrations/001_create_episodes.sql and inject both variables into a trusted shell/CI environment before
 running `python scripts/run_pilot.py tests/fixtures/episode_sample.json --backend supabase`.
+
+## 2026-08-31 Logging/OAuth regression
+
+PASS (10 unit/adapter tests)
+
+- Rotating `pipeline.log` creation and UTF-8 event persistence verified.
+- FFmpeg stdout/stderr isolation into `ffmpeg.log` verified with a subprocess fixture.
+- Missing FFmpeg executable produces both a traceback in `pipeline.log` and an actionable `ffmpeg.log`.
+- Revoked refresh token fixture produces `YouTubeAuthenticationError` with re-authorization guidance.
+- Missing video is no longer reported as a mock upload success.
+- Live YouTube upload was not attempted; replacing the revoked Actions secret requires channel-owner OAuth.

@@ -1,7 +1,12 @@
+import logging
+
 from src.drive_manager import fetch_latest_episode_state, create_episode_document
 
+
+logger = logging.getLogger(__name__)
+
 def generate_connected_script(market_data):
-    print("[Director] Gemini API 기반 서사 체이닝 및 대본 작성 시작...")
+    logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
     next_ep = prev_state.get("episode", 101) + 1
     
@@ -22,6 +27,6 @@ def generate_connected_script(market_data):
         "narration": f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
     }
     
-    print(f"[Director] 매칭 완료 - 빌런: {villain}, 테마: {theme}")
+    logger.info("script_generation_finished villain=%s theme=%s", villain, theme)
     create_episode_document(script_data)
     return script_data
