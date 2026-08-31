@@ -37,3 +37,18 @@ PASS (10 unit/adapter tests)
 - Revoked refresh token fixture produces `YouTubeAuthenticationError` with re-authorization guidance.
 - Missing video is no longer reported as a mock upload success.
 - Live YouTube upload was not attempted; replacing the revoked Actions secret requires channel-owner OAuth.
+
+## 2026-08-31 Story-to-video pilot
+
+PASS (contract and adapter level; 13 unit/adapter tests)
+
+- The supplied three-sequence story transitions from `SCRIPT_READY` to `RENDERED`.
+- Output contract checks H.264/AAC streams, 1080x1920 resolution and 30 seconds ±0.5 seconds.
+- Local manifest records video SHA-256, duration, dimensions and codecs.
+- Supabase PATCH is guarded by both `episode_id` and the source `content_hash`.
+- Landscape output is rejected before the `RENDERED` state update.
+
+The current development container has no FFmpeg binary. Installation was attempted, but its Ubuntu package
+repositories returned HTTP 403 through the environment proxy. A real encode was therefore not claimed locally.
+The GitHub Actions `video-pilot` mode installs FFmpeg and Noto CJK fonts, runs the real encoder/ffprobe checks,
+and uploads `artifacts/`, `logs/` and the preview even when the job fails.

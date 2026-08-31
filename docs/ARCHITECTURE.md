@@ -339,3 +339,28 @@ FastAPI 관리자 화면으로 감싼다.
 
 현재 workflow 파일은 대소문자만 다른 중복 정의를 제거해 한 번의 schedule이 업로드를 두 번
 실행할 위험을 없앴다. YouTube 게시 기본값도 `private`로 강제한다.
+
+## 14. Story-to-Video 우선 파일럿
+
+외부 영상 생성 모델과 YouTube를 연결하기 전에 제공 스토리가 렌더링 입력으로 정상 변환되고,
+검증된 영상 결과가 상태 저장소에 반영되는지를 먼저 확인한다.
+
+```text
+episode_sample.json
+  → Episode 계약 검증
+  → SCRIPT_READY 저장/upsert
+  → Seq_1~3 자막 카드(각 10초) 렌더링
+  → preview.mp4
+  → ffprobe 해상도·길이·코덱 QA
+  → content_hash 일치 확인
+  → RENDERED + video metadata 갱신
+```
+
+렌더러는 한국어 폰트가 설치된 경우 Noto Sans CJK/Nanum을 우선 사용한다. FFmpeg와 ffprobe의
+성공 exit code만 신뢰하지 않고 1080x1920, 예상 길이 ±0.5초, video/audio stream 존재를 확인한다.
+로컬 manifest 갱신은 임시 파일 교체 방식이며, Supabase 갱신은 `episode_id + content_hash` 조건을
+모두 만족하는 행만 수정한다. 스토리가 렌더링 도중 변경되면 상태 전이를 거부한다.
+
+이 단계의 `preview.mp4`는 실제 `video_prompt` 기반 장면 생성 품질을 평가하는 결과물이 아니다.
+현재 통과 범위는 데이터 흐름, 3개 장면의 시간 배치, 한글 자막, 세로 영상 인코딩과 RENDERED 상태
+갱신이다. 이후 image/video generation adapter를 장면 소스로 교체해도 상태 계약은 유지한다.

@@ -96,3 +96,20 @@ Supabase 실행은 `episode_id` 충돌 시 같은 행을 갱신하므로 네트�
 만료·취소된 인증 오류입니다. Google OAuth 동의 절차로 채널을 다시 인증하고 repository의
 `YOUTUBE_REFRESH_TOKEN` Actions secret을 새 값으로 교체한 뒤 workflow를 재실행해야 합니다.
 로그에는 token 값이 기록되지 않습니다. 업로드 기본 공개 범위는 안전을 위해 `private`입니다.
+
+## 스토리 → 영상 우선 파일럿
+
+YouTube 인증과 업로드를 제외하고 샘플 스토리의 검증, 30초 세로 영상 생성, ffprobe QA,
+manifest/Supabase 상태 갱신까지만 독립적으로 실행할 수 있습니다.
+
+```bash
+python scripts/run_video_pilot.py tests/fixtures/episode_sample.json
+```
+
+성공 조건은 `artifacts/EP-20260826-02/preview.mp4`가 H.264/AAC, 1080x1920, 30초로 생성되고
+manifest가 `SCRIPT_READY`에서 `RENDERED`로 변경되는 것입니다. 이 영상은 프롬프트 기반 생성 영상이
+아니라 장면별 자막과 길이/연속성/인코딩을 확인하는 스토리보드 프리뷰입니다.
+
+GitHub Actions에서 **Run workflow → mode: video-pilot**을 선택하면 YouTube secret을 사용하거나
+업로드하지 않고 동일 검증을 수행하며, 영상·manifest·로그를 artifact로 다운로드할 수 있습니다.
+Supabase 상태까지 갱신하려면 `002_add_video_artifacts.sql` 적용 후 `--backend supabase`를 사용합니다.

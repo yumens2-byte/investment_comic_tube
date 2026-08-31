@@ -13,6 +13,7 @@ from typing import Any
 import requests
 
 from src.episode import Episode
+from src.video_pilot import VideoArtifact
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,29 @@ class LocalEpisodeRepository:
         manifest_temporary.replace(manifest_path)
         return SaveResult(episode.episode_id, "local", digest, str(episode_path))
 
+    def mark_rendered(self, episode: Episode, video: VideoArtifact) -> None:
+        target = self.artifact_dir / episode.episode_id
+        manifest_path = target / "manifest.json"
+        if not manifest_path.is_file():
+            raise FileNotFoundError(f"Episode manifest does not exist: {manifest_path}")
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest.get("content_hash") != content_hash(episode.source):
+            raise ValueError("Episode content changed after SCRIPT_READY")
+        manifest.update({
+            "status": "RENDERED",
+            "video_path": str(video.path),
+            "video_hash": video.sha256,
+            "video_duration_seconds": video.duration_seconds,
+            "video_width": video.width,
+            "video_height": video.height,
+            "video_codec": video.video_codec,
+            "audio_codec": video.audio_codec,
+            "rendered_at": datetime.now(timezone.utc).isoformat(),
+        })
+        temporary = target / ".manifest.json.tmp"
+        temporary.write_text(json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(manifest_path)
+
 
 class SupabaseEpisodeRepository:
     """Small PostgREST adapter; keeps service-role credentials out of clients/logs."""
@@ -96,3 +120,32 @@ class SupabaseEpisodeRepository:
         )
         response.raise_for_status()
         return SaveResult(episode.episode_id, "supabase", digest)
+
+    def mark_rendered(self, episode: Episode, video: VideoArtifact) -> None:
+        digest = content_hash(episode.source)
+        response = requests.patch(
+            f"{self.url}/rest/v1/episodes",
+            params={"episode_id": f"eq.{episode.episode_id}", "content_hash": f"eq.{digest}"},
+            headers={
+                "apikey": self.key,
+                "Authorization": f"Bearer {self.key}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+            json={
+                "status": "RENDERED",
+                "video_path": str(video.path),
+                "video_hash": video.sha256,
+                "video_metadata": {
+                    "duration_seconds": video.duration_seconds,
+                    "width": video.width,
+                    "height": video.height,
+                    "video_codec": video.video_codec,
+                    "audio_codec": video.audio_codec,
+                },
+            },
+            timeout=self.timeout_seconds,
+        )
+        response.raise_for_status()
+        if not response.json():
+            raise RuntimeError("Supabase render update matched no episode; content may have changed")
