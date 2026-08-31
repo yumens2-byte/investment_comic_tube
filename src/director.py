@@ -1,6 +1,3 @@
-import os
-import json
-import google.generativeai as genai
 from src.drive_manager import fetch_latest_episode_state, create_episode_document
 
 def generate_connected_script(market_data):
