@@ -19,7 +19,7 @@ class GenerateSceneImagesTest(unittest.TestCase):
     def test_no_api_key_returns_reason(self):
         paths, reason = generate_scene_images({"villain": "Debt Titan", "theme": "긴축"})
 
-        self.assertEqual(paths, [])
+        self.assertTrue(all(p is None for p in paths))
         self.assertEqual(reason, "image:no_api_key")
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)
@@ -32,7 +32,7 @@ class GenerateSceneImagesTest(unittest.TestCase):
                 {"villain": "Debt Titan", "theme": "긴축"}, output_dir=directory
             )
 
-        self.assertEqual(paths, [])
+        self.assertTrue(all(p is None for p in paths))
         self.assertIn("RuntimeError", reason)
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)
@@ -47,7 +47,7 @@ class GenerateSceneImagesTest(unittest.TestCase):
                 {"villain": "Debt Titan", "theme": "긴축"}, output_dir=directory
             )
 
-        self.assertEqual(paths, [])
+        self.assertTrue(all(p is None for p in paths))
         self.assertEqual(reason, "image:no_inline_image_in_response")
 
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)

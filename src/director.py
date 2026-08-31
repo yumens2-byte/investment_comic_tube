@@ -11,6 +11,7 @@ import logging
 import os
 
 from src.drive_manager import fetch_latest_episode_state, start_episode
+from src.story import build_storyboard
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +69,16 @@ def generate_connected_script(market_data: dict) -> dict:
     base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
     narration, degraded_reason = _polish_narration(base_narration)
 
+    storyboard, story_degraded = build_storyboard(market_data, villain, theme)
+    degraded_reasons = [r for r in (degraded_reason, story_degraded) if r]
+
     script_data = {
         "episode": next_ep,
         "villain": villain,
         "theme": theme,
         "narration": narration,
-        "degraded_reason": degraded_reason,
+        "storyboard": storyboard,
+        "degraded_reason": ";".join(degraded_reasons) if degraded_reasons else None,
     }
 
     logger.info("script_generation_finished villain=%s theme=%s", villain, theme)

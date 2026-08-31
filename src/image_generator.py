@@ -22,16 +22,23 @@ logger = logging.getLogger(__name__)
 IMAGE_MODEL = "gemini-3.1-flash-image"
 
 
-def _build_prompt(script_data: dict) -> str:
+def _build_prompt(script_data: dict, scene: str | None = None) -> str:
     villain = script_data.get("villain", "Unknown")
     theme = script_data.get("theme", "")
+    scene_line = (
+        f"Scene to depict: {scene} "
+        if scene
+        else f"The tiger hero confronts {villain} in a dramatic market battle scene. "
+    )
     return (
         "Vertical 9:16 comic-style illustration for a financial-market story "
         "called 'EDT Universe'. "
         f"{HERO_APPEARANCE} "
         f"{get_villain_appearance(villain)} "
-        f"The tiger hero confronts {villain} in a dramatic market battle scene. "
+        f"{scene_line}"
         f"Theme: {theme}. "
+        "Keep the art style, character designs and colour palette perfectly consistent "
+        "with the described characters across every scene. "
         "CRITICAL: the image must contain absolutely NO text, NO letters, NO words, "
         "NO numbers, NO captions, NO speech bubbles, NO signage, NO watermarks and "
         "NO logos of any kind, in any language. Purely visual illustration only. "
@@ -55,55 +62,62 @@ def _extract_image_bytes(response) -> list[bytes]:
 def generate_scene_images(
     script_data: dict,
     output_dir: str = "artifacts/images",
+    scenes: list[str] | None = None,
     count: int = 2,
-) -> tuple[list[str], str | None]:
-    """장면 이미지를 생성해 로컬에 저장하고 (경로 목록, 실패 사유) 를 반환한다.
+) -> tuple[list[str | None], str | None]:
+    """비트별 장면 이미지를 생성해 (경로 목록, 실패 사유) 를 반환한다.
 
-    실패 사유가 None 이면 정상 생성된 것이다.
+    scenes 가 주어지면 각 장면 지시문마다 이미지를 1장씩 생성한다.
+    실패한 장면은 목록에서 None 이며, renderer 가 해당 장면을 건너뛴다.
+    사유가 None 이면 전부 정상 생성된 것이다.
     """
+    scene_list: list[str | None] = list(scenes) if scenes else [None] * count
+    total = len(scene_list)
+
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.warning("image_generation_skipped reason=no_api_key")
-        return [], "image:no_api_key"
+        return [None] * total, "image:no_api_key"
 
     try:
         from google import genai
     except ImportError:
         logger.warning("image_generation_skipped reason=google_genai_not_installed")
-        return [], "image:google_genai_not_installed"
+        return [None] * total, "image:google_genai_not_installed"
 
-    prompt = _build_prompt(script_data)
     client = genai.Client(api_key=api_key)
-
-    collected: list[bytes] = []
-    last_error: str | None = None
-    for attempt in range(count):
-        try:
-            response = client.models.generate_content(model=IMAGE_MODEL, contents=prompt)
-        except Exception as e:  # noqa: BLE001 - 외부 API 실패는 렌더링 폴백으로 흡수
-            last_error = f"{type(e).__name__}: {e}"
-            logger.warning("image_generation_call_failed attempt=%s reason=%s", attempt + 1, last_error)
-            break
-
-        image_bytes = _extract_image_bytes(response)
-        if not image_bytes:
-            last_error = "no_inline_image_in_response"
-            logger.warning("image_generation_empty attempt=%s", attempt + 1)
-            break
-        collected.extend(image_bytes)
-
-    if not collected:
-        reason = f"image:{last_error or 'unknown'}"
-        logger.warning("image_generation_failed reason=%s", reason)
-        return [], reason
-
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    paths: list[str] = []
-    for idx, data in enumerate(collected[:count]):
+
+    paths: list[str | None] = []
+    last_error: str | None = None
+
+    for idx, scene in enumerate(scene_list):
+        prompt = _build_prompt(script_data, scene)
+        try:
+            response = client.models.generate_content(model=IMAGE_MODEL, contents=prompt)
+            image_bytes = _extract_image_bytes(response)
+        except Exception as e:  # noqa: BLE001 - 외부 API 실패는 렌더링 폴백으로 흡수
+            last_error = f"{type(e).__name__}"
+            logger.warning("image_generation_call_failed index=%s reason=%s: %s", idx, last_error, e)
+            paths.append(None)
+            continue
+
+        if not image_bytes:
+            last_error = "no_inline_image_in_response"
+            logger.warning("image_generation_empty index=%s", idx)
+            paths.append(None)
+            continue
+
         path = out_dir / f"scene_{idx}.png"
-        path.write_bytes(data)
+        path.write_bytes(image_bytes[0])
         paths.append(str(path))
 
-    logger.info("image_generation_finished count=%s model=%s", len(paths), IMAGE_MODEL)
+    ok_count = sum(1 for p in paths if p)
+    logger.info("image_generation_finished count=%s total=%s model=%s", ok_count, total, IMAGE_MODEL)
+
+    if ok_count == 0:
+        return paths, f"image:{last_error or 'unknown'}"
+    if ok_count < total:
+        return paths, f"image:partial_{ok_count}of{total}"
     return paths, None

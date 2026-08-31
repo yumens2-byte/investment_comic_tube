@@ -7,8 +7,29 @@ from src.image_generator import generate_scene_images
 from src.logging_config import configure_logging
 from src.publisher import upload_to_youtube
 from src.renderer import render_video
+from src.tts import synthesize_narrations
 
 logger = logging.getLogger(__name__)
+
+
+def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
+    """스토리보드 + 이미지 + 음성을 렌더러가 받는 장면 목록으로 합친다.
+
+    이미지가 없는 비트는 렌더링할 수 없으므로 건너뛴다.
+    """
+    scenes = []
+    for idx, beat in enumerate(storyboard):
+        image = image_paths[idx] if idx < len(image_paths) else None
+        if not image:
+            continue
+        scenes.append(
+            {
+                "image": image,
+                "caption": beat.get("narration", ""),
+                "audio": audio_paths[idx] if idx < len(audio_paths) else None,
+            }
+        )
+    return scenes
 
 
 def main() -> int:
@@ -17,29 +38,45 @@ def main() -> int:
 
     episode_id = None
     video_id = None
+    final_status = "failed"
     degraded: list[str] = []
     try:
         market_data = fetch_market_data()
 
         # script 생성 시 episode row가 status=script_ready 로 선기록된다
-        # (src.director.generate_connected_script -> src.drive_manager.start_episode)
         script_data = generate_connected_script(market_data)
         episode_id = script_data.get("episode_id")
         if script_data.get("degraded_reason"):
             degraded.append(script_data["degraded_reason"])
 
+        storyboard = script_data.get("storyboard") or []
+        narrations = [beat.get("narration", "") for beat in storyboard]
+
         step = record_step_start(episode_id, "image")
-        image_paths, image_degraded = generate_scene_images(script_data)
+        image_paths, image_degraded = generate_scene_images(
+            script_data, scenes=[beat.get("scene") for beat in storyboard]
+        )
         if image_degraded:
             degraded.append(image_degraded)
         record_step_finish(
             step,
-            "success" if image_paths else "skipped",
+            "success" if any(image_paths) else "skipped",
             error_code=image_degraded,
         )
 
+        step = record_step_start(episode_id, "tts")
+        audio_paths, tts_degraded = synthesize_narrations(narrations)
+        if tts_degraded:
+            degraded.append(tts_degraded)
+        record_step_finish(
+            step,
+            "success" if any(audio_paths) else "skipped",
+            error_code=tts_degraded,
+        )
+
         step = record_step_start(episode_id, "render")
-        video_file = render_video(script_data, image_paths=image_paths or None)
+        scenes = _build_scenes(storyboard, image_paths, audio_paths)
+        video_file = render_video(script_data, scenes=scenes or None)
         update_episode(episode_id, status="rendered", video_path=video_file)
         record_step_finish(step, "success")
 
