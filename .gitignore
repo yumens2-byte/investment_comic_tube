@@ -150,6 +150,10 @@ activemq-data/
 # Environments
 .env
 .envrc
+artifacts/
+data/
+logs/
+output_short.mp4
 .venv
 env/
 venv/
