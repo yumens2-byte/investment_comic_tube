@@ -17,6 +17,7 @@ def main() -> int:
 
     episode_id = None
     video_id = None
+    degraded: list[str] = []
     try:
         market_data = fetch_market_data()
 
@@ -24,10 +25,18 @@ def main() -> int:
         # (src.director.generate_connected_script -> src.drive_manager.start_episode)
         script_data = generate_connected_script(market_data)
         episode_id = script_data.get("episode_id")
+        if script_data.get("degraded_reason"):
+            degraded.append(script_data["degraded_reason"])
 
         step = record_step_start(episode_id, "image")
-        image_paths = generate_scene_images(script_data)
-        record_step_finish(step, "success" if image_paths else "skipped")
+        image_paths, image_degraded = generate_scene_images(script_data)
+        if image_degraded:
+            degraded.append(image_degraded)
+        record_step_finish(
+            step,
+            "success" if image_paths else "skipped",
+            error_code=image_degraded,
+        )
 
         step = record_step_start(episode_id, "render")
         video_file = render_video(script_data, image_paths=image_paths or None)
@@ -36,22 +45,35 @@ def main() -> int:
 
         step = record_step_start(episode_id, "upload")
         video_id = upload_to_youtube(video_file, script_data)
+        if video_id:
+            final_status = "published_degraded" if degraded else "published"
+        else:
+            final_status = "rendered_no_upload"
         update_episode(
             episode_id,
-            status="published" if video_id else "rendered_no_upload",
+            status=final_status,
             youtube_video_id=video_id,
+            degraded_reason=";".join(degraded) if degraded else None,
         )
         record_step_finish(step, "success" if video_id else "skipped")
     except Exception:
         logger.exception("pipeline_failed")
         if episode_id:
             try:
-                update_episode(episode_id, status="failed")
+                update_episode(
+                    episode_id,
+                    status="failed",
+                    degraded_reason=";".join(degraded) if degraded else None,
+                )
             except Exception:
                 logger.exception("episode_failure_record_failed")
         return 1
 
-    logger.info("pipeline_finished video_id=%s", video_id or "not_uploaded")
+    if degraded:
+        logger.warning("pipeline_degraded reasons=%s", ";".join(degraded))
+    logger.info(
+        "pipeline_finished video_id=%s status=%s", video_id or "not_uploaded", final_status
+    )
     return 0
 
 
