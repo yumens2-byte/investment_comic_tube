@@ -25,6 +25,12 @@ AUDIO_TAIL_PAD_SEC = 0.6
 
 BGM_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
 
+# Ken Burns 효과: 같은 이미지를 여러 비트에 재사용해도 화면이 단조롭지 않도록
+# 장면마다 줌 방향을 교대한다 (비용 절감을 위한 이미지 재사용의 보완책).
+KEN_BURNS_FPS = 30
+KEN_BURNS_MAX_ZOOM = 1.12
+KEN_BURNS_SPEED = 0.0012
+
 
 def _escape_drawtext(text: str) -> str:
     return text.replace("\\", r"\\").replace("'", r"\'").replace(":", r"\:")
@@ -134,6 +140,19 @@ def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> 
         raise
 
 
+def _ken_burns_filter(duration: float, zoom_in: bool) -> str:
+    """장면 길이에 맞춘 zoompan 필터식을 만든다."""
+    frames = max(1, int(duration * KEN_BURNS_FPS))
+    if zoom_in:
+        z = f"min(1+{KEN_BURNS_SPEED}*on,{KEN_BURNS_MAX_ZOOM})"
+    else:
+        z = f"max({KEN_BURNS_MAX_ZOOM}-{KEN_BURNS_SPEED}*on,1.0)"
+    return (
+        f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
+        f"d={frames}:s=1080x1920:fps={KEN_BURNS_FPS}"
+    )
+
+
 def _render_segment(
     image_path: str,
     caption: str,
@@ -142,10 +161,12 @@ def _render_segment(
     segment_path: Path,
     ffmpeg_log: Path,
     append: bool,
+    zoom_in: bool = True,
 ) -> None:
     """이미지 1장 + 자막 + (있으면) 내레이션으로 장면 하나를 렌더링한다."""
     video_filter = (
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"{_ken_burns_filter(duration, zoom_in)},"
         f"drawtext=text='{_escape_drawtext(caption)}':fontcolor=white:fontsize=52:"
         "box=1:boxcolor=black@0.55:boxborderw=22:x=(w-text_w)/2:y=h-th-200"
     )
@@ -208,6 +229,7 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
             segment_path=segment_path,
             ffmpeg_log=ffmpeg_log,
             append=bool(segment_paths),
+            zoom_in=(idx % 2 == 0),
         )
         segment_paths.append(segment_path)
 

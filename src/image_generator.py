@@ -16,10 +16,14 @@ import os
 from pathlib import Path
 
 from src.characters import HERO_APPEARANCE, get_villain_appearance
+from src.quota import is_quota_exhausted
 
 logger = logging.getLogger(__name__)
 
 IMAGE_MODEL = "gemini-3.1-flash-image"
+
+# 비용 통제: 비트 수와 무관하게 생성할 이미지 장수. renderer 가 비트에 재사용한다.
+DEFAULT_IMAGE_COUNT = int(os.getenv("IMAGE_COUNT", "3"))
 
 
 def _build_prompt(script_data: dict, scene: str | None = None) -> str:
@@ -101,6 +105,12 @@ def generate_scene_images(
             last_error = f"{type(e).__name__}"
             logger.warning("image_generation_call_failed index=%s reason=%s: %s", idx, last_error, e)
             paths.append(None)
+            if is_quota_exhausted(e):
+                # 한도 소진은 재시도해도 회복되지 않는다. 남은 호출을 즉시 포기한다.
+                last_error = "quota_exhausted"
+                logger.warning("image_generation_aborted reason=quota_exhausted remaining=%s", total - idx - 1)
+                paths.extend([None] * (total - idx - 1))
+                break
             continue
 
         if not image_bytes:

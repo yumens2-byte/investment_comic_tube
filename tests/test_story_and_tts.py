@@ -147,3 +147,49 @@ class SynthesizeNarrationsTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuotaFailFastTest(unittest.TestCase):
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True)
+    @patch("google.genai.Client")
+    def test_tts_aborts_remaining_calls_on_quota(self, client_cls):
+        models = client_cls.return_value.models
+        models.generate_content.side_effect = RuntimeError(
+            "429 RESOURCE_EXHAUSTED: monthly spending cap exceeded"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths, reason = synthesize_narrations([f"line{i}" for i in range(6)], output_dir=directory)
+
+        self.assertEqual(models.generate_content.call_count, 1)
+        self.assertEqual(len(paths), 6)
+        self.assertEqual(reason, "tts:quota_exhausted")
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "k"}, clear=True)
+    @patch("google.genai.Client")
+    def test_tts_non_quota_error_keeps_trying(self, client_cls):
+        models = client_cls.return_value.models
+        models.generate_content.side_effect = RuntimeError("temporary hiccup")
+
+        with tempfile.TemporaryDirectory() as directory:
+            synthesize_narrations(["a", "b", "c"], output_dir=directory)
+
+        self.assertEqual(models.generate_content.call_count, 3)
+
+
+class QuotaDetectionTest(unittest.TestCase):
+    def test_detects_known_quota_markers(self):
+        from src.quota import is_quota_exhausted
+
+        for message in (
+            "429 RESOURCE_EXHAUSTED",
+            "project has exceeded its monthly spending cap",
+            "quota exceeded for this project",
+        ):
+            self.assertTrue(is_quota_exhausted(RuntimeError(message)), message)
+
+    def test_ignores_transient_errors(self):
+        from src.quota import is_quota_exhausted
+
+        for message in ("connection reset", "500 internal error", "429 rate limit, retry"):
+            self.assertFalse(is_quota_exhausted(RuntimeError(message)), message)

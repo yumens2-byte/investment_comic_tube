@@ -7,19 +7,38 @@ from src.image_generator import generate_scene_images
 from src.logging_config import configure_logging
 from src.publisher import upload_to_youtube
 from src.renderer import render_video
+from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
 
 logger = logging.getLogger(__name__)
 
 
+def _pick_image(image_paths: list, slot: int):
+    """비트의 이미지 슬롯에 대응하는 이미지를 고른다.
+
+    비용 절감을 위해 이미지 수(기본 3장)가 비트 수(6개)보다 적으므로
+    슬롯 매핑으로 재사용한다. 해당 슬롯 이미지가 실패했으면
+    생성에 성공한 다른 이미지로 대체해 비트가 통째로 사라지지 않게 한다.
+    """
+    if not image_paths:
+        return None
+    if slot < len(image_paths) and image_paths[slot]:
+        return image_paths[slot]
+    available = [p for p in image_paths if p]
+    if not available:
+        return None
+    return available[slot % len(available)]
+
+
 def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
     """스토리보드 + 이미지 + 음성을 렌더러가 받는 장면 목록으로 합친다.
 
-    이미지가 없는 비트는 렌더링할 수 없으므로 건너뛴다.
+    이미지는 슬롯 매핑으로 재사용되며, 쓸 이미지가 하나도 없는 비트는 건너뛴다.
     """
     scenes = []
     for idx, beat in enumerate(storyboard):
-        image = image_paths[idx] if idx < len(image_paths) else None
+        slot = BEAT_IMAGE_SLOT[idx] if idx < len(BEAT_IMAGE_SLOT) else 0
+        image = _pick_image(image_paths, slot)
         if not image:
             continue
         scenes.append(
@@ -53,8 +72,9 @@ def main() -> int:
         narrations = [beat.get("narration", "") for beat in storyboard]
 
         step = record_step_start(episode_id, "image")
+        # 비용 통제: 비트(6개)마다가 아니라 슬롯(기본 3개)만큼만 생성한다
         image_paths, image_degraded = generate_scene_images(
-            script_data, scenes=[beat.get("scene") for beat in storyboard]
+            script_data, scenes=SLOT_SCENES
         )
         if image_degraded:
             degraded.append(image_degraded)

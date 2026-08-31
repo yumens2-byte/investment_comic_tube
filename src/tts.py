@@ -14,6 +14,8 @@ import os
 import wave
 from pathlib import Path
 
+from src.quota import is_quota_exhausted
+
 logger = logging.getLogger(__name__)
 
 TTS_MODEL = "gemini-3.1-flash-tts-preview"
@@ -98,6 +100,12 @@ def synthesize_narrations(
             last_error = f"{type(e).__name__}"
             logger.warning("tts_call_failed index=%s reason=%s: %s", idx, last_error, e)
             paths.append(None)
+            if is_quota_exhausted(e):
+                last_error = "quota_exhausted"
+                remaining = len(narrations) - idx - 1
+                logger.warning("tts_aborted reason=quota_exhausted remaining=%s", remaining)
+                paths.extend([None] * remaining)
+                break
             continue
 
         if not pcm:

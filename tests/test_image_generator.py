@@ -25,7 +25,7 @@ class GenerateSceneImagesTest(unittest.TestCase):
     @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)
     @patch("google.genai.Client")
     def test_api_failure_returns_reason(self, client_cls):
-        client_cls.return_value.models.generate_content.side_effect = RuntimeError("quota exceeded")
+        client_cls.return_value.models.generate_content.side_effect = RuntimeError("transient network blip")
 
         with tempfile.TemporaryDirectory() as directory:
             paths, reason = generate_scene_images(
@@ -88,3 +88,41 @@ class GenerateSceneImagesTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QuotaFailFastTest(unittest.TestCase):
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)
+    @patch("google.genai.Client")
+    def test_quota_exhaustion_aborts_remaining_calls(self, client_cls):
+        models = client_cls.return_value.models
+        models.generate_content.side_effect = RuntimeError(
+            "429 RESOURCE_EXHAUSTED: project has exceeded its monthly spending cap"
+        )
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths, reason = generate_scene_images(
+                {"villain": "Debt Titan", "theme": "긴축"},
+                output_dir=directory,
+                scenes=["s1", "s2", "s3", "s4", "s5", "s6"],
+            )
+
+        # 첫 호출에서 한도 소진을 감지하면 나머지 5회는 호출하지 않는다
+        self.assertEqual(models.generate_content.call_count, 1)
+        self.assertEqual(len(paths), 6)
+        self.assertTrue(all(p is None for p in paths))
+        self.assertEqual(reason, "image:quota_exhausted")
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test-key"}, clear=True)
+    @patch("google.genai.Client")
+    def test_non_quota_error_keeps_trying_other_scenes(self, client_cls):
+        models = client_cls.return_value.models
+        models.generate_content.side_effect = RuntimeError("temporary hiccup")
+
+        with tempfile.TemporaryDirectory() as directory:
+            generate_scene_images(
+                {"villain": "Debt Titan", "theme": "긴축"},
+                output_dir=directory,
+                scenes=["s1", "s2", "s3"],
+            )
+
+        self.assertEqual(models.generate_content.call_count, 3)

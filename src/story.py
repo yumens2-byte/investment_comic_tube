@@ -71,6 +71,27 @@ BEAT_SCENES = [
 
 BEAT_COUNT = len(BEAT_SCENES)
 
+# 비용 통제: 이미지 N장을 6비트에 재사용하기 위한 슬롯 매핑.
+# 슬롯 0 = 위협/시장(빌런 중심), 슬롯 1 = 히어로 등장, 슬롯 2 = 대결/마무리.
+# 이미지 장수가 슬롯 수보다 적으면 renderer 가 남는 슬롯을 순환 대입한다.
+BEAT_IMAGE_SLOT = [0, 0, 0, 1, 2, 2]
+
+# 이미지 슬롯별 생성 프롬프트용 장면 지시문 (BEAT_SCENES 와 별개)
+SLOT_SCENES = [
+    (
+        "The villain looms huge over a cracking financial city skyline, shockwave and "
+        "debris, storm clouds, the tiger hero is not visible."
+    ),
+    (
+        "The tiger hero lands heroically in the foreground, crouched on rubble, "
+        "looking up at the villain, determined."
+    ),
+    (
+        "The tiger hero and the villain clash head-on in the center of the frame, "
+        "energy bursting between them, sunrise breaking through."
+    ),
+]
+
 
 def _fallback_narrations(villain: str, theme: str, market_data: dict) -> list[str]:
     """규칙 기반 내레이션. Gemini 실패 시 사용한다."""
