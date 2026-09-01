@@ -57,6 +57,10 @@ EXPECTED_MODELS = {
 
 RUNTIME_STALE_HOURS = 30  # 매일 발행이므로 30시간 넘게 신규 회차가 없으면 이상
 
+# 검증이 반드시 엄격 모드로 배포돼야 한다. 완화 모드로 배포되면
+# 지표가 비어도 근거 없는 콘텐츠가 발행된다.
+REQUIRED_VALIDATION_INDICATORS = ["TNX", "VIX", "NASDAQ", "SPX", "DXY"]
+
 
 class Report:
     def __init__(self) -> None:
@@ -135,6 +139,35 @@ def check_code_constants(r: Report) -> None:
             r.ok("episode_base", f"{base} -> 첫 회차 1화")
     except Exception as e:  # noqa: BLE001
         r.fail("episode_base", f"{type(e).__name__}: {e}")
+
+    # 입력 검증 설정 (완화 모드로 배포되면 근거 없는 콘텐츠가 나간다)
+    try:
+        from src.validation import REQUIRED_INDICATORS, _strict_mode
+
+        missing = [i for i in REQUIRED_VALIDATION_INDICATORS if i not in REQUIRED_INDICATORS]
+        if missing:
+            r.fail("validation_indicators", f"필수 지표 검증 목록에서 누락: {missing}")
+        else:
+            r.ok("validation_indicators", f"{len(REQUIRED_INDICATORS)}종 필수 검증")
+
+        if not _strict_mode():
+            r.fail("validation_strict", "STRICT_VALIDATION=false -- 지표 누락에도 발행됨")
+        else:
+            r.ok("validation_strict", "엄격 모드")
+    except Exception as e:  # noqa: BLE001
+        r.fail("validation_module", f"{type(e).__name__}: {e}")
+
+    # main 이 검증을 실제로 호출하는지 (모듈만 있고 배선 누락되는 경우 방지)
+    main_src = Path("main.py")
+    if main_src.exists():
+        text = main_src.read_text(encoding="utf-8")
+        for call in ("validate_market_data(", "validate_storyboard("):
+            if call not in text:
+                r.fail("validation_wiring", f"main.py 가 {call} 를 호출하지 않음")
+        if "validate_market_data(" in text and "validate_storyboard(" in text:
+            r.ok("validation_wiring", "main.py 배선 확인")
+    else:
+        r.fail("validation_wiring", "main.py 없음")
 
     # 함수 계약(반환 튜플 개수가 바뀌면 호출부가 조용히 깨진다)
     contracts = [

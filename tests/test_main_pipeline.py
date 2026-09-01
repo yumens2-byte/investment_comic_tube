@@ -12,7 +12,7 @@ STORYBOARD = [
     {"beat": "HERO", "scene": "s4", "narration": "n4"},
     {"beat": "CLASH", "scene": "s5", "narration": "n5"},
     {"beat": "LESSON", "scene": "s6", "narration": "n6"},
-]
+]  # 6비트 -- validate_storyboard 통과 조건
 IMAGES3 = ["img0.png", "img1.png", "img2.png"]
 AUDIO6 = [f"a{i}.wav" for i in range(6)]
 SCRIPT_OK = {
@@ -24,7 +24,16 @@ SCRIPT_OK = {
     "degraded_reason": None,
 }
 SCRIPT_DEGRADED = dict(SCRIPT_OK, degraded_reason="story:RuntimeError")
-MARKET = {"TNX": {"close": 4.8}, "VIX": {"close": 15.0}}
+# validate_market_data 를 통과하려면 필수 지표 5종이 모두 완비돼야 한다
+MARKET = {
+    "TNX": {"close": 4.8, "change_pct": 0.5, "sma20": 4.4, "dev_pct": 9.0},
+    "VIX": {"close": 15.0, "change_pct": 1.2, "sma20": 15.5, "dev_pct": -3.2},
+    "NASDAQ": {"close": 26000.0, "change_pct": -0.3, "sma20": 25800.0, "dev_pct": 0.8},
+    "SPX": {"close": 5800.0, "change_pct": -0.2, "sma20": 5750.0, "dev_pct": 0.9},
+    "DXY": {"close": 103.5, "change_pct": 0.1, "sma20": 103.0, "dev_pct": 0.5},
+    "GOLD": {"close": 2400.0, "change_pct": 0.4, "sma20": 2380.0, "dev_pct": 0.8},
+    "OIL": {"close": 78.0, "change_pct": -0.6, "sma20": 79.0, "dev_pct": -1.3},
+}
 
 
 class BuildScenesTest(unittest.TestCase):
@@ -180,3 +189,59 @@ class PipelineOrchestrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ValidationAbortTest(unittest.TestCase):
+    def tearDown(self):
+        for handler in logging.getLogger().handlers[:]:
+            handler.close()
+            logging.getLogger().removeHandler(handler)
+
+    @patch("main.generate_connected_script")
+    @patch("main.fetch_market_data", return_value={"TNX": {"close": None, "change_pct": None}})
+    def test_missing_market_data_aborts_before_creating_episode(self, _fetch, script):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+            exit_code = main.main()
+
+        self.assertEqual(exit_code, 1)
+        # 핵심: 검증 실패 시 에피소드 생성 자체가 일어나면 안 된다 (고아 row 방지)
+        script.assert_not_called()
+
+    @patch("main.upload_to_youtube")
+    @patch("main.render_video")
+    @patch("main.synthesize_narrations")
+    @patch("main.generate_scene_images")
+    @patch("main.record_step_start", return_value="s1")
+    @patch("main.record_step_finish")
+    @patch("main.update_episode")
+    @patch("main.generate_connected_script")
+    @patch("main.fetch_market_data")
+    def test_incomplete_storyboard_aborts_before_paid_api_calls(
+        self, fetch, script, update_episode, _finish, _start, images, tts, render, upload
+    ):
+        fetch.return_value = {
+            n: {"close": 1.0, "change_pct": 0.1}
+            for n in ("TNX", "VIX", "NASDAQ", "SPX", "DXY")
+        }
+        # 6비트여야 하는데 2개만 생성된 상황
+        script.return_value = {
+            "episode": 1,
+            "villain": "Debt Titan",
+            "narration": "n",
+            "storyboard": [{"beat": "HOOK", "scene": "s", "narration": "n"}],
+            "episode_id": "ep-0001-abcd",
+            "degraded_reason": None,
+        }
+
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+            exit_code = main.main()
+
+        self.assertEqual(exit_code, 1)
+        # 유료 API(이미지/TTS)와 업로드가 전혀 호출되지 않아야 한다
+        images.assert_not_called()
+        tts.assert_not_called()
+        render.assert_not_called()
+        upload.assert_not_called()
+        # 이미 생성된 회차는 aborted_validation 으로 기록된다
+        update_episode.assert_called_once()
+        self.assertEqual(update_episode.call_args.kwargs["status"], "aborted_validation")

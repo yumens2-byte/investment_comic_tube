@@ -9,6 +9,7 @@ from src.publisher import upload_to_youtube
 from src.renderer import render_video
 from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
+from src.validation import ValidationError, validate_market_data, validate_storyboard
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +63,10 @@ def main() -> int:
     try:
         market_data = fetch_market_data()
 
+        # 필수 지표가 없으면 여기서 중단한다. start_episode() 이전이므로
+        # DB에 고아 회차 row가 남지 않고, YouTube에도 아무것도 올라가지 않는다.
+        validate_market_data(market_data)
+
         # script 생성 시 episode row가 status=script_ready 로 선기록된다
         script_data = generate_connected_script(market_data)
         episode_id = script_data.get("episode_id")
@@ -69,6 +74,7 @@ def main() -> int:
             degraded.append(script_data["degraded_reason"])
 
         storyboard = script_data.get("storyboard") or []
+        validate_storyboard(storyboard)
         narrations = [beat.get("narration", "") for beat in storyboard]
 
         step = record_step_start(episode_id, "image")
@@ -113,6 +119,16 @@ def main() -> int:
             degraded_reason=";".join(degraded) if degraded else None,
         )
         record_step_finish(step, "success" if video_id else "skipped")
+    except ValidationError as e:
+        # 검증 실패는 버그가 아니라 '발행하지 않기로 한 정상 판단'이다.
+        # traceback 대신 사유만 남기고, 부분 생성물이 있으면 실패로 기록한다.
+        logger.error("pipeline_aborted_validation reason=%s", e)
+        if episode_id:
+            try:
+                update_episode(episode_id, status="aborted_validation", degraded_reason=str(e))
+            except Exception:
+                logger.exception("episode_abort_record_failed")
+        return 1
     except Exception:
         logger.exception("pipeline_failed")
         if episode_id:
