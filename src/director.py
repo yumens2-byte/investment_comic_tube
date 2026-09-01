@@ -55,7 +55,7 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
 def generate_connected_script(market_data: dict) -> dict:
     logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
-    next_ep = prev_state.get("episode", 102) + 1
+    next_ep = prev_state.get("episode", 0) + 1
 
     # 고정 임계값 대신 복합 스코어로 판정한다 (빌런 고착 방지)
     villain, theme, scores = select_villain(market_data)

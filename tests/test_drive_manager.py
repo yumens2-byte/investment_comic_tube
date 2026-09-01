@@ -111,3 +111,39 @@ class StepRunTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EpisodeNumberingTest(unittest.TestCase):
+    def test_default_state_starts_numbering_at_one(self):
+        # 빈 테이블이면 next_ep = 0 + 1 = 1 이어야 한다
+        self.assertEqual(drive_manager.DEFAULT_STATE["episode"], 0)
+
+    @patch("src.drive_manager.get_client")
+    def test_empty_table_yields_episode_one(self, get_client):
+        client = MagicMock()
+        result = MagicMock()
+        result.data = []
+        client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = (
+            result
+        )
+        get_client.return_value = client
+
+        state = drive_manager.fetch_latest_episode_state()
+
+        self.assertEqual(state["episode"] + 1, 1)
+
+    @patch("src.drive_manager.get_client")
+    def test_db_failure_also_yields_episode_one(self, get_client):
+        get_client.side_effect = RuntimeError("db down")
+
+        state = drive_manager.fetch_latest_episode_state()
+
+        self.assertEqual(state["episode"] + 1, 1)
+
+    @patch("src.drive_manager.get_client")
+    def test_episode_id_is_zero_padded_for_single_digit(self, get_client):
+        get_client.return_value = MagicMock()
+
+        episode_id = drive_manager.start_episode({"episode": 1, "villain": "Debt Titan"})
+
+        self.assertTrue(episode_id.startswith("ep-0001-"))

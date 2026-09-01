@@ -17,8 +17,9 @@ from src.db_client import get_client
 
 logger = logging.getLogger(__name__)
 
+# 에피소드가 하나도 없을 때의 기준값. next_ep = 이 값 + 1 이므로 0 이면 1화부터 시작한다.
 DEFAULT_STATE = {
-    "episode": 102,
+    "episode": 0,
     "villain": None,
     "theme": None,
     "story_state": None,
