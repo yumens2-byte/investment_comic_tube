@@ -1,0 +1,70 @@
+name: Deployment & Runtime Healthcheck
+
+# 배포가 의도대로 반영됐는지, 그리고 매일 발행이 정상 동작하는지 자동 점검한다.
+# Gemini API 를 호출하지 않으므로 이 워크플로우 자체는 비용이 발생하지 않는다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'main.py'
+      - 'scripts/healthcheck.py'
+      - '.github/workflows/pipeline.yml'
+      - '.github/workflows/healthcheck.yml'
+  schedule:
+    # 본 파이프라인(UTC 00:00) 종료 후 30분 뒤에 발행 결과를 확인한다
+    - cron: '30 0 * * *'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '점검 범위'
+        required: true
+        type: choice
+        default: all
+        options:
+          - config
+          - runtime
+          - all
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Dependencies
+        run: pip install -r requirements.txt
+
+      - name: Resolve mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "value=config" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "value=all" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${{ inputs.mode }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run Healthcheck
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          export PYTHONPATH=$(pwd)
+          python scripts/healthcheck.py --mode "${{ steps.mode.outputs.value }}"
