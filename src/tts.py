@@ -48,9 +48,13 @@ def _extract_pcm(response) -> bytes | None:
     return None
 
 
+DEFAULT_TONE = "긴장감 있고 힘 있는 톤으로 또박또박"
+
+
 def synthesize_narrations(
     narrations: list[str],
     output_dir: str = "artifacts/audio",
+    tones: list[str | None] | None = None,
 ) -> tuple[list[str | None], str | None]:
     """내레이션 문장들을 음성 파일로 합성한다.
 
@@ -87,8 +91,9 @@ def synthesize_narrations(
 
     for idx, line in enumerate(narrations):
         # 스타일 지시문이 그대로 낭독되지 않도록 낭독 구간을 명확히 분리한다
+        tone = (tones[idx] if tones and idx < len(tones) and tones[idx] else DEFAULT_TONE)
         prompt = (
-            "다음 대사를 긴장감 있고 힘 있는 톤으로 또박또박 낭독해라. "
+            f"다음 대사를 {tone}으로 낭독해라. "
             f"낭독할 대사: {line}"
         )
         try:

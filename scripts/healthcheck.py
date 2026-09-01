@@ -218,6 +218,18 @@ def check_environment(r: Report) -> None:
     else:
         r.fail("ffmpeg", "ffmpeg 실행파일 없음 -- 렌더링 불가")
 
+    # 한글 폰트: 없으면 자막이 전부 두부(□)로 나가 콘텐츠가 못 쓰게 된다
+    try:
+        from src.renderer import find_kr_font
+
+        font = find_kr_font()
+        if font:
+            r.ok("kr_font", font)
+        else:
+            r.fail("kr_font", "한글 글리프 폰트 없음 -- 자막이 두부(□)로 렌더링됨")
+    except Exception as e:  # noqa: BLE001
+        r.fail("kr_font", f"{type(e).__name__}: {e}")
+
     if shutil.which("ffprobe"):
         r.ok("ffprobe", "PATH 확인")
     else:

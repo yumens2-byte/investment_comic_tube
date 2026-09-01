@@ -31,9 +31,91 @@ KEN_BURNS_FPS = 30
 KEN_BURNS_MAX_ZOOM = 1.12
 KEN_BURNS_SPEED = 0.0012
 
+# --- 오프닝 훅(0~3초) 전용 연출 파라미터 ---
+# 쇼츠 피드에서 스크롤을 멈추게 하는 구간이라 일반 비트와 다른 규칙을 쓴다.
+HOOK_MAX_SEC = 3.0            # 비기능 요구사항: 훅은 3초를 절대 넘기지 않는다
+HOOK_PUNCH_START_ZOOM = 1.35  # 크게 시작해 급속히 빠지는 펀치인
+HOOK_PUNCH_SPEED = 0.11       # 프레임당 축소량 (일반 0.0012 대비 훨씬 공격적)
+HOOK_SHAKE_PX = 18            # 화면 흔들림 진폭 (1080px 대비 1.7%)
+HOOK_SHAKE_PAD = 1.10         # 흔들림 여유분만큼 확대 후 크롭
+HOOK_FONT_SIZE = 86
+HOOK_FONT_COLOR = "0xFFEE00"  # 강렬 옐로우
+HOOK_WRAP_CHARS = 13          # 한국어 기준 1080px 에 들어가는 글자수
+ATEMPO_MAX = 1.5              # 3초 초과 내레이션 압축 상한
+
+SFX_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg"}
+
+# 한국어 자막 폰트.
+# drawtext 에 fontfile 을 지정하지 않으면 fontconfig 가 기본 폰트를 고르는데,
+# 그 폰트에 한글 글리프가 없으면 전부 두부(□)로 렌더링된다.
+# fonts-noto-cjk 가 설치돼 있어도 이 현상이 발생하므로 경로를 명시해야 한다.
+KR_FONT_CANDIDATES = [
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-DemiLight.ttc",
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+]
+
+
+def find_kr_font() -> str | None:
+    """한글 글리프를 가진 폰트 경로를 찾는다. 환경변수로 강제 지정 가능."""
+    override = os.getenv("KR_FONT_PATH")
+    if override and Path(override).exists():
+        return override
+    for candidate in KR_FONT_CANDIDATES:
+        if Path(candidate).exists():
+            return candidate
+    # 마지막 수단: 설치된 CJK 폰트를 디렉터리에서 직접 탐색
+    noto_dir = Path("/usr/share/fonts/opentype/noto")
+    if noto_dir.is_dir():
+        for path in sorted(noto_dir.glob("NotoSansCJK*")):
+            return str(path)
+    logger.warning("kr_font_not_found -- 한글 자막이 두부(□)로 렌더링될 수 있다")
+    return None
+
 
 def _escape_drawtext(text: str) -> str:
+    """구형 인라인 drawtext 용 이스케이프. 신규 경로는 textfile 을 쓴다."""
     return text.replace("\\", r"\\").replace("'", r"\'").replace(":", r"\:")
+
+
+def _wrap_korean(text: str, width: int) -> str:
+    """한국어 자막을 폭에 맞춰 줄바꿈한다.
+
+    기존 자막 깨짐 원인 중 하나가 40자 이상 한 줄이 화면 밖으로 넘친 것이었다.
+    어절 단위로 나누되 한 어절이 폭보다 길면 강제로 자른다.
+    """
+    words = text.split()
+    lines: list[str] = []
+    current = ""
+    for word in words:
+        candidate = f"{current} {word}".strip()
+        if len(candidate) <= width:
+            current = candidate
+            continue
+        if current:
+            lines.append(current)
+        while len(word) > width:
+            lines.append(word[:width])
+            word = word[width:]
+        current = word
+    if current:
+        lines.append(current)
+    return "\n".join(lines[:2])  # 최대 2줄
+
+
+def _write_caption_file(text: str, path: Path, width: int) -> Path:
+    """자막을 파일로 쓴다.
+
+    인라인 text= 대신 textfile= 을 쓰는 이유:
+      1) '%' 가 strftime 으로 확장돼 텍스트가 깨지던 문제를 원천 차단
+         (실제 사고: "금리가 4.76%까지" -> 깨짐)
+      2) 따옴표/콜론/쉼표 이스케이프가 아예 필요 없어진다
+    """
+    path.write_text(_wrap_korean(text, width), encoding="utf-8")
+    return path
 
 
 def _run_ffmpeg(cmd: list[str], ffmpeg_log: Path, append: bool = False) -> None:
@@ -83,6 +165,77 @@ def _find_bgm() -> str | None:
     return str(random.choice(candidates))
 
 
+def _find_sfx(name: str | None) -> str | None:
+    """훅 효과음을 찾는다. 유형별 파일이 없으면 임의 1개, 그것도 없으면 None.
+
+    BGM/레퍼런스와 동일한 opt-in 슬롯 패턴이다. 코드가 음원을 자동으로
+    받아오지 않으므로 저작권 리스크가 없고, 파일이 없어도 무음으로 동작한다.
+    """
+    sfx_dir = Path(os.getenv("SFX_DIR", "assets/sfx"))
+    if not sfx_dir.is_dir():
+        return None
+    candidates = sorted(p for p in sfx_dir.iterdir() if p.suffix.lower() in SFX_EXTENSIONS)
+    if not candidates:
+        return None
+    if name:
+        exact = [p for p in candidates if p.stem == name]
+        if exact:
+            return str(exact[0])
+    return str(random.choice(candidates))
+
+
+def _hook_video_filter(duration: float, caption_file: Path) -> str:
+    """훅 전용 영상 필터: 흔들림 + 펀치인 + 중앙 대형 자막."""
+    frames = max(1, int(duration * KEN_BURNS_FPS))
+    pad_w = int(1080 * HOOK_SHAKE_PAD)
+    pad_h = int(1920 * HOOK_SHAKE_PAD)
+    off_x = (pad_w - 1080) // 2
+    off_y = (pad_h - 1920) // 2
+    zoom = f"max({HOOK_PUNCH_START_ZOOM}-{HOOK_PUNCH_SPEED}*on,1.0)"
+
+    font = find_kr_font()
+    font_opt = f"fontfile='{font}':" if font else ""
+
+    return (
+        f"scale={pad_w}:{pad_h},"
+        # 비동기 주파수(9Hz/11Hz)로 흔들어 기계적 반복감을 없앤다
+        f"crop=1080:1920:x='{off_x}+{HOOK_SHAKE_PX}*sin(2*PI*t*9)'"
+        f":y='{off_y}+{HOOK_SHAKE_PX}*cos(2*PI*t*11)',"
+        f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d={frames}:s=1080x1920:fps={KEN_BURNS_FPS},"
+        f"drawtext={font_opt}textfile='{caption_file.as_posix()}':expansion=none:"
+        f"fontcolor={HOOK_FONT_COLOR}:fontsize={HOOK_FONT_SIZE}:"
+        "borderw=8:bordercolor=black:line_spacing=14:"
+        "x=(w-text_w)/2:y=(h-text_h)/2"
+    )
+
+
+def _hook_audio_filter(
+    narration_dur: float | None,
+    target: float,
+    audio_index: int,
+    sfx_index: int | None,
+) -> str:
+    """훅 전용 오디오 필터: 3초 초과 내레이션을 속도로 압축하고 SFX를 얹는다.
+
+    입력 0번은 이미지(영상)이므로 오디오 스트림 인덱스는 1부터 시작한다.
+    인덱스를 하드코딩하면 SFX 유무에 따라 매핑이 어긋난다.
+    """
+    chain = []
+    if narration_dur and narration_dur > target:
+        tempo = min(ATEMPO_MAX, narration_dur / target)
+        chain.append(f"[{audio_index}:a]atempo={tempo:.3f},aformat=channel_layouts=stereo[n]")
+    else:
+        chain.append(f"[{audio_index}:a]aformat=channel_layouts=stereo[n]")
+
+    if sfx_index is not None:
+        chain.append(f"[{sfx_index}:a]aformat=channel_layouts=stereo,volume=0.7[s]")
+        chain.append("[n][s]amix=inputs=2:duration=first:dropout_transition=0[aout]")
+    else:
+        chain.append("[n]anull[aout]")
+    return ";".join(chain)
+
+
 def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
     """기존 오디오(내레이션) 위에 BGM을 낮은 볼륨으로 깐다.
 
@@ -112,6 +265,11 @@ def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
     logger.info("bgm_applied source=%s", bgm_path)
 
 
+def _font_opt() -> str:
+    font = find_kr_font()
+    return f"fontfile='{font}':" if font else ""
+
+
 def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> None:
     ep_num = script_data.get("episode", 101)
     villain = script_data.get("villain", "Unknown")
@@ -122,8 +280,8 @@ def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> 
         "-f", "lavfi", "-i", "color=c=black:s=1080x1920:d=8",
         "-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo",
         "-vf", (
-            f"drawtext=text='{_escape_drawtext(text_content)}':fontcolor=orange:fontsize=64:"
-            "x=(w-text_w)/2:y=(h-text_h)/2"
+            f"drawtext={_font_opt()}text='{_escape_drawtext(text_content)}':"
+            "fontcolor=orange:fontsize=64:x=(w-text_w)/2:y=(h-text_h)/2"
         ),
         "-c:v", "libx264", "-t", "8", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-shortest",
@@ -151,6 +309,56 @@ def _ken_burns_filter(duration: float, zoom_in: bool) -> str:
         f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':"
         f"d={frames}:s=1080x1920:fps={KEN_BURNS_FPS}"
     )
+
+
+def _render_hook_segment(
+    image_path: str,
+    caption: str,
+    audio_path: str | None,
+    sfx_name: str | None,
+    segment_path: Path,
+    ffmpeg_log: Path,
+    append: bool,
+) -> float:
+    """오프닝 훅 장면을 렌더링한다. 반환값은 실제 장면 길이(초)."""
+    duration = HOOK_MAX_SEC
+    narration_dur = _probe_duration(audio_path) if audio_path else None
+
+    caption_file = segment_path.parent / "hook_caption.txt"
+    _write_caption_file(caption, caption_file, HOOK_WRAP_CHARS)
+
+    sfx_path = _find_sfx(sfx_name)
+
+    # 입력 0 = 이미지, 1 = 내레이션(또는 무음), 2 = SFX(있을 때만)
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", image_path]
+    if audio_path:
+        cmd += ["-i", audio_path]
+    else:
+        cmd += ["-f", "lavfi", "-t", f"{duration:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+    audio_index = 1
+    sfx_index = None
+    if sfx_path:
+        cmd += ["-i", sfx_path]
+        sfx_index = 2
+
+    # -vf 와 -filter_complex 는 동시 사용할 수 없으므로 영상 필터도 filter_complex 안에 넣는다
+    filter_complex = (
+        f"[0:v]{_hook_video_filter(duration, caption_file)}[vout];"
+        + _hook_audio_filter(narration_dur, duration, audio_index, sfx_index)
+    )
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "[vout]", "-map", "[aout]",
+        "-c:v", "libx264", "-t", f"{duration:.3f}", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        str(segment_path),
+    ]
+    _run_ffmpeg(cmd, ffmpeg_log, append=append)
+    logger.info(
+        "hook_rendered duration=%.2f narration=%.2f sfx=%s caption='%s'",
+        duration, narration_dur or 0.0, sfx_path or "none", caption,
+    )
+    return duration
 
 
 def _render_segment(
@@ -224,6 +432,19 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
                 duration = max(MIN_SEGMENT_SEC, probed + AUDIO_TAIL_PAD_SEC)
 
         segment_path = tmp_dir / f"segment_{idx}.mp4"
+        if scene.get("is_hook"):
+            _render_hook_segment(
+                image_path=image_path,
+                caption=scene.get("caption", ""),
+                audio_path=audio_path,
+                sfx_name=scene.get("sfx"),
+                segment_path=segment_path,
+                ffmpeg_log=ffmpeg_log,
+                append=bool(segment_paths),
+            )
+            segment_paths.append(segment_path)
+            continue
+
         _render_segment(
             image_path=image_path,
             caption=scene.get("caption", ""),

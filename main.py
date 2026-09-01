@@ -47,6 +47,9 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
                 "image": image,
                 "caption": beat.get("narration", ""),
                 "audio": audio_paths[idx] if idx < len(audio_paths) else None,
+                # 훅 비트는 renderer 가 전용 연출(펀치인/흔들림/중앙자막/SFX)을 적용한다
+                "is_hook": bool(beat.get("is_hook")),
+                "sfx": beat.get("sfx"),
             }
         )
     return scenes
@@ -91,7 +94,8 @@ def main() -> int:
         )
 
         step = record_step_start(episode_id, "tts")
-        audio_paths, tts_degraded = synthesize_narrations(narrations)
+        tones = [beat.get("tts_tone") for beat in storyboard]
+        audio_paths, tts_degraded = synthesize_narrations(narrations, tones=tones)
         if tts_degraded:
             degraded.append(tts_degraded)
         record_step_finish(

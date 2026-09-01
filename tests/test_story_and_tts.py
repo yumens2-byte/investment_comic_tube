@@ -49,13 +49,14 @@ class BuildStoryboardTest(unittest.TestCase):
     @patch("google.genai.Client")
     def test_success_uses_model_narrations(self, client_cls):
         client_cls.return_value.models.generate_content.return_value = MagicMock(
-            text='["문장0","문장1","문장2","문장3","문장4","문장5"]'
+            text='["공포지수 경고등이 켜졌다","문장1","문장2","문장3","문장4","문장5"]'
         )
 
         storyboard, _state, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
 
         self.assertIsNone(degraded)
-        self.assertEqual([b["narration"] for b in storyboard], SIX)
+        self.assertEqual([b["narration"] for b in storyboard][1:], SIX[1:])
+        self.assertTrue(storyboard[0].get("is_hook"))
         self.assertEqual(storyboard[0]["beat"], "HOOK")
         self.assertEqual(storyboard[-1]["beat"], "LESSON")
 

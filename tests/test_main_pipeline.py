@@ -13,7 +13,7 @@ STORYBOARD = [
     {"beat": "CLASH", "scene": "s5", "narration": "n5"},
     {"beat": "LESSON", "scene": "s6", "narration": "n6"},
 ]  # 6비트 -- validate_storyboard 통과 조건
-IMAGES3 = ["img0.png", "img1.png", "img2.png"]
+IMAGES4 = ["img0.png", "img1.png", "img2.png", "img3.png"]
 AUDIO6 = [f"a{i}.wav" for i in range(6)]
 SCRIPT_OK = {
     "episode": 103,
@@ -37,27 +37,27 @@ MARKET = {
 
 
 class BuildScenesTest(unittest.TestCase):
-    def test_three_images_are_reused_across_six_beats(self):
-        scenes = main._build_scenes(STORYBOARD, IMAGES3, AUDIO6)
+    def test_four_images_are_reused_across_six_beats(self):
+        scenes = main._build_scenes(STORYBOARD, IMAGES4, AUDIO6)
 
-        # 6비트 전부 렌더링되며, 이미지는 슬롯 매핑 [0,0,0,1,2,2] 대로 재사용된다
+        # 슬롯 매핑 [0,1,1,2,3,3] -- 슬롯0은 훅 전용 클로즈업이라 단독으로 쓴다
         self.assertEqual(len(scenes), 6)
         self.assertEqual(
             [s["image"] for s in scenes],
-            ["img0.png", "img0.png", "img0.png", "img1.png", "img2.png", "img2.png"],
+            ["img0.png", "img1.png", "img1.png", "img2.png", "img3.png", "img3.png"],
         )
         self.assertEqual([s["caption"] for s in scenes], [f"n{i}" for i in range(1, 7)])
         self.assertEqual([s["audio"] for s in scenes], AUDIO6)
 
     def test_missing_slot_image_falls_back_to_available_one(self):
-        scenes = main._build_scenes(STORYBOARD, ["img0.png", None, None], AUDIO6)
+        scenes = main._build_scenes(STORYBOARD, ["img0.png", None, None, None], AUDIO6)
 
         # 슬롯 1,2 이미지가 없어도 비트가 사라지지 않고 생성된 이미지로 대체된다
         self.assertEqual(len(scenes), 6)
         self.assertTrue(all(s["image"] == "img0.png" for s in scenes))
 
     def test_no_images_yields_no_scenes(self):
-        scenes = main._build_scenes(STORYBOARD, [None, None, None], AUDIO6)
+        scenes = main._build_scenes(STORYBOARD, [None, None, None, None], AUDIO6)
 
         self.assertEqual(scenes, [])
 
@@ -74,7 +74,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.upload_to_youtube", return_value="yt-video-123")
     @patch("main.render_video", return_value="output_short.mp4")
     @patch("main.synthesize_narrations", return_value=(AUDIO6, None))
-    @patch("main.generate_scene_images", return_value=(IMAGES3, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_fully_successful_run_marks_published(
@@ -87,9 +87,9 @@ class PipelineOrchestrationTest(unittest.TestCase):
         # 비용 통제: 비트(6)가 아니라 슬롯(3)만큼만 이미지를 생성한다
         from src.story import SLOT_SCENES
         self.assertEqual(images.call_args.kwargs["scenes"], SLOT_SCENES)
-        self.assertEqual(len(SLOT_SCENES), 3)
+        self.assertEqual(len(SLOT_SCENES), 4)
         # 내레이션 6줄이 전부 TTS로 전달됐는지
-        tts.assert_called_once_with([f"n{i}" for i in range(1, 7)])
+        self.assertEqual(tts.call_args.args[0], [f"n{i}" for i in range(1, 7)])
         # 이미지 3장으로 6장면이 렌더링되는지
         scenes = render.call_args.kwargs["scenes"]
         self.assertEqual(len(scenes), 6)
@@ -105,7 +105,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.upload_to_youtube", return_value="yt-video-123")
     @patch("main.render_video", return_value="output_short.mp4")
     @patch("main.synthesize_narrations", return_value=([None] * 6, "tts:no_api_key"))
-    @patch("main.generate_scene_images", return_value=([None] * 3, "image:no_api_key"))
+    @patch("main.generate_scene_images", return_value=([None] * 4, "image:no_api_key"))
     @patch("main.generate_connected_script", return_value=SCRIPT_DEGRADED)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_all_ai_steps_degraded_marks_published_degraded(
@@ -130,7 +130,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.upload_to_youtube", return_value="yt-video-123")
     @patch("main.render_video", return_value="output_short.mp4")
     @patch("main.synthesize_narrations", return_value=(["a0.wav"] + [None] * 5, "tts:partial_1of6"))
-    @patch("main.generate_scene_images", return_value=(IMAGES3, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_partial_tts_still_renders_all_scenes(
@@ -153,7 +153,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.upload_to_youtube", return_value=None)
     @patch("main.render_video", return_value="output_short.mp4")
     @patch("main.synthesize_narrations", return_value=(AUDIO6, None))
-    @patch("main.generate_scene_images", return_value=(IMAGES3, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_no_upload_marks_rendered_no_upload(
@@ -170,7 +170,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.update_episode")
     @patch("main.render_video", side_effect=RuntimeError("ffmpeg exploded"))
     @patch("main.synthesize_narrations", return_value=([None] * 6, "tts:no_api_key"))
-    @patch("main.generate_scene_images", return_value=([None] * 3, "image:no_api_key"))
+    @patch("main.generate_scene_images", return_value=([None] * 4, "image:no_api_key"))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_render_failure_marks_episode_failed_with_reasons(
