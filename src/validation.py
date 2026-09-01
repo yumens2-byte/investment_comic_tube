@@ -41,6 +41,10 @@ class StoryboardIncomplete(ValidationError):
     pass
 
 
+class RenderEnvironmentInvalid(ValidationError):
+    pass
+
+
 def _strict_mode() -> bool:
     """기본은 엄격 모드. STRICT_VALIDATION=false 로만 완화할 수 있다."""
     return os.getenv("STRICT_VALIDATION", "true").strip().lower() != "false"
@@ -124,3 +128,29 @@ def validate_storyboard(storyboard: list[dict]) -> None:
         return
 
     logger.info("storyboard_validation_passed beats=%s", len(storyboard))
+
+
+def validate_render_environment() -> None:
+    """렌더링 환경이 정상인지 검증한다.
+
+    한글 폰트가 없으면 훅 자막이 전부 두부(□)로 렌더링된다. 그 영상이 발행되면
+    YouTube에 영구히 남으므로, 지표 누락과 동일하게 사전에 중단한다.
+    """
+    logger.info("render_env_validation_started")
+
+    from src.renderer import find_kr_font
+
+    font = find_kr_font()
+    if font:
+        logger.info("render_env_validation_passed kr_font=%s", font)
+        return
+
+    detail = (
+        "한글 글리프 폰트를 찾을 수 없다 -- 자막이 두부(□)로 렌더링된다. "
+        "워크플로우의 'apt-get install fonts-noto-cjk' 설치 여부 또는 "
+        "KR_FONT_PATH 환경변수를 확인하라."
+    )
+    if _strict_mode():
+        logger.error("render_env_validation_failed reason=%s", detail)
+        raise RenderEnvironmentInvalid(detail)
+    logger.warning("render_env_validation_bypassed reason=%s", detail)

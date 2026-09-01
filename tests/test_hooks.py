@@ -226,3 +226,70 @@ class StoryboardHookIntegrationTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FontResolutionTest(unittest.TestCase):
+    def test_env_override_takes_priority(self):
+        with tempfile.TemporaryDirectory() as d:
+            font = Path(d) / "custom.ttf"
+            font.write_bytes(b"x")
+            with patch.dict("os.environ", {"KR_FONT_PATH": str(font)}, clear=True):
+                self.assertEqual(find_kr_font(), str(font))
+
+    def test_ignores_override_when_path_missing(self):
+        with patch.dict("os.environ", {"KR_FONT_PATH": "/nope/font.ttf"}, clear=True):
+            # 존재하지 않는 경로는 무시하고 다음 단계로 넘어가야 한다
+            self.assertNotEqual(find_kr_font(), "/nope/font.ttf")
+
+    def test_falls_back_to_recursive_search(self):
+        from src import renderer
+
+        with tempfile.TemporaryDirectory() as d:
+            noto = Path(d) / "opentype" / "noto"
+            noto.mkdir(parents=True)
+            target = noto / "NotoSansCJK-Bold.ttc"
+            target.write_bytes(b"x")
+            with patch.dict("os.environ", {}, clear=True), \
+                 patch.object(renderer, "KR_FONT_CANDIDATES", []), \
+                 patch.object(renderer, "FONT_SEARCH_ROOTS", [d]):
+                self.assertEqual(find_kr_font(), str(target))
+
+    def test_uses_fc_match_as_last_resort(self):
+        from src import renderer
+
+        with patch.dict("os.environ", {}, clear=True), \
+             patch.object(renderer, "KR_FONT_CANDIDATES", []), \
+             patch.object(renderer, "FONT_SEARCH_ROOTS", []), \
+             patch.object(renderer, "_font_from_fc_match", return_value="/fake/kr.ttf"):
+            self.assertEqual(find_kr_font(), "/fake/kr.ttf")
+
+    def test_returns_none_when_nothing_found(self):
+        from src import renderer
+
+        with patch.dict("os.environ", {}, clear=True), \
+             patch.object(renderer, "KR_FONT_CANDIDATES", []), \
+             patch.object(renderer, "FONT_SEARCH_ROOTS", []), \
+             patch.object(renderer, "_font_from_fc_match", return_value=None):
+            self.assertIsNone(find_kr_font())
+
+
+class RenderEnvironmentValidationTest(unittest.TestCase):
+    def test_missing_font_aborts_pipeline(self):
+        from src.validation import RenderEnvironmentInvalid, validate_render_environment
+
+        with patch("src.renderer.find_kr_font", return_value=None), \
+             self.assertRaises(RenderEnvironmentInvalid):
+            validate_render_environment()
+
+    def test_present_font_passes(self):
+        from src.validation import validate_render_environment
+
+        with patch("src.renderer.find_kr_font", return_value="/usr/share/fonts/x.ttc"):
+            validate_render_environment()
+
+    def test_bypass_mode_only_warns(self):
+        from src.validation import validate_render_environment
+
+        with patch("src.renderer.find_kr_font", return_value=None), \
+             patch.dict("os.environ", {"STRICT_VALIDATION": "false"}, clear=True):
+            validate_render_environment()

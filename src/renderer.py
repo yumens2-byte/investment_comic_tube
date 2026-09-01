@@ -51,28 +51,68 @@ SFX_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg"}
 # fonts-noto-cjk 가 설치돼 있어도 이 현상이 발생하므로 경로를 명시해야 한다.
 KR_FONT_CANDIDATES = [
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
     "/usr/share/fonts/opentype/noto/NotoSansCJK-DemiLight.ttc",
     "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
     "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
 ]
+
+# 경로가 배포판마다 다를 수 있으므로 파일명 패턴으로도 탐색한다
+KR_FONT_PATTERNS = ["NotoSansCJK*", "NotoSerifCJK*", "NanumGothic*", "*CJK*"]
+FONT_SEARCH_ROOTS = ["/usr/share/fonts", "/usr/local/share/fonts", str(Path.home() / ".fonts")]
+
+
+def _font_from_fc_match() -> str | None:
+    """fontconfig 에게 한글을 실제로 그릴 수 있는 폰트를 직접 물어본다."""
+    try:
+        result = subprocess.run(
+            ["fc-match", "-f", "%{file}", ":lang=ko"],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    path = result.stdout.strip()
+    return path if path and Path(path).exists() else None
 
 
 def find_kr_font() -> str | None:
-    """한글 글리프를 가진 폰트 경로를 찾는다. 환경변수로 강제 지정 가능."""
+    """한글 글리프를 가진 폰트 경로를 찾는다.
+
+    drawtext 에 fontfile 을 지정하지 않으면 fontconfig 가 기본 폰트를 고르는데,
+    그 폰트에 한글 글리프가 없으면 전부 두부(□)로 렌더링된다.
+    fonts-noto-cjk 가 설치돼 있어도 발생하므로 경로를 반드시 명시해야 한다.
+
+    탐색 순서:
+      1) KR_FONT_PATH 환경변수 (운영 중 강제 지정용)
+      2) 알려진 고정 경로
+      3) 폰트 디렉터리 재귀 탐색 (배포판별 경로 차이 흡수)
+      4) fc-match 질의 (최후의 수단)
+    """
     override = os.getenv("KR_FONT_PATH")
     if override and Path(override).exists():
         return override
+
     for candidate in KR_FONT_CANDIDATES:
         if Path(candidate).exists():
             return candidate
-    # 마지막 수단: 설치된 CJK 폰트를 디렉터리에서 직접 탐색
-    noto_dir = Path("/usr/share/fonts/opentype/noto")
-    if noto_dir.is_dir():
-        for path in sorted(noto_dir.glob("NotoSansCJK*")):
-            return str(path)
-    logger.warning("kr_font_not_found -- 한글 자막이 두부(□)로 렌더링될 수 있다")
+
+    for root in FONT_SEARCH_ROOTS:
+        root_path = Path(root)
+        if not root_path.is_dir():
+            continue
+        for pattern in KR_FONT_PATTERNS:
+            for path in sorted(root_path.rglob(pattern)):
+                if path.suffix.lower() in {".ttc", ".otf", ".ttf"}:
+                    return str(path)
+
+    matched = _font_from_fc_match()
+    if matched:
+        return matched
+
+    logger.warning("kr_font_not_found -- 한글 자막이 두부로 렌더링될 수 있다")
     return None
 
 

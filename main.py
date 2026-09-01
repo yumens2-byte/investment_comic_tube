@@ -9,7 +9,12 @@ from src.publisher import upload_to_youtube
 from src.renderer import render_video
 from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
-from src.validation import ValidationError, validate_market_data, validate_storyboard
+from src.validation import (
+    ValidationError,
+    validate_market_data,
+    validate_render_environment,
+    validate_storyboard,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +69,10 @@ def main() -> int:
     final_status = "failed"
     degraded: list[str] = []
     try:
+        # 렌더링 환경(한글 폰트) 먼저 확인한다. 두부 자막 영상이 발행되면
+        # YouTube에 영구히 남으므로 유료 API를 쓰기 전에 중단하는 것이 싸다.
+        validate_render_environment()
+
         market_data = fetch_market_data()
 
         # 필수 지표가 없으면 여기서 중단한다. start_episode() 이전이므로
