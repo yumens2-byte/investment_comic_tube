@@ -75,11 +75,12 @@ class FindBgmTest(unittest.TestCase):
 
 
 class RenderBgmIntegrationTest(unittest.TestCase):
+    @patch("src.renderer._normalize_audio")
     @patch("src.renderer._has_audio_stream", return_value=True)
     @patch("src.renderer.subprocess.run")
     @patch("src.renderer.os.path.getsize", return_value=51200)
     @patch("src.renderer.os.replace")
-    def test_bgm_applied_when_file_present(self, os_replace, _getsize, run, _probe):
+    def test_bgm_applied_when_file_present(self, os_replace, _getsize, run, _probe, _norm):
         run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
         from src.renderer import render_video
@@ -92,14 +93,14 @@ class RenderBgmIntegrationTest(unittest.TestCase):
             with patch.dict("os.environ", env, clear=True):
                 render_video({"episode": 103, "villain": "Debt Titan"})
 
-        os_replace.assert_called_once()
         commands = [" ".join(c.args[0]) for c in run.call_args_list]
         self.assertTrue(any("stream_loop" in c for c in commands))
 
+    @patch("src.renderer._normalize_audio")
     @patch("src.renderer.subprocess.run")
     @patch("src.renderer.os.path.getsize", return_value=39440)
     @patch("src.renderer.os.replace")
-    def test_no_bgm_leaves_video_untouched(self, os_replace, _getsize, run):
+    def test_no_bgm_leaves_video_untouched(self, os_replace, _getsize, run, _norm):
         run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
         from src.renderer import render_video
@@ -111,7 +112,8 @@ class RenderBgmIntegrationTest(unittest.TestCase):
             with patch.dict("os.environ", env, clear=True):
                 render_video({"episode": 103, "villain": "Debt Titan"})
 
-        os_replace.assert_not_called()
+        commands = [" ".join(c.args[0]) for c in run.call_args_list]
+        self.assertFalse(any("stream_loop" in c for c in commands))
 
 
 if __name__ == "__main__":

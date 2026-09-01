@@ -27,6 +27,7 @@ from src.hooks import (
     is_valid_hook_line,
     select_hook_type,
 )
+from src.quota import is_quota_exhausted
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +41,8 @@ BEAT_SCENES = [
             "EXTREME CLOSE-UP of EDT the tiger hero's face filling the entire frame, "
             "snarling with bared fangs, fierce amber eyes locked on the viewer, "
             "the toothed blade of his roaring chainsaw crossing diagonally in front of him, "
-            "harsh dramatic rim light, sparks and embers flying, shallow depth of field."
+            "harsh dramatic rim light, sparks and embers flying, shallow depth of field. "
+            "Place his head in the UPPER TWO THIRDS; keep the BOTTOM THIRD uncluttered."
         ),
     ),
     (
@@ -95,7 +97,7 @@ SLOT_SCENES = [
         "snarling with bared fangs, fierce amber eyes locked on the viewer, "
         "the toothed blade of his roaring chainsaw crossing diagonally in front of him, "
         "harsh dramatic rim light, sparks and embers flying, shallow depth of field. "
-        "Leave the center of the frame readable for a large caption."
+        "Place his head and the chainsaw blade in the UPPER TWO THIRDS of the frame. Keep the BOTTOM THIRD visually simple and uncluttered -- a large caption will be overlaid there, so nothing important may sit in the bottom third."
     ),
     (
         "The villain looms huge over a cracking financial city skyline, shockwave and "
@@ -270,6 +272,9 @@ def _generate_narrations(
                 parsed[0] = fallback_hook_line(hook_type, villain, market_data)
                 logger.warning("hook_line_fallback_applied type=%s", hook_type)
     except Exception as e:  # noqa: BLE001 - 외부 API 실패는 규칙 문장으로 폴백
+        if is_quota_exhausted(e):
+            logger.warning("story_generation_aborted reason=quota_exhausted")
+            return fallback, "story:quota_exhausted"
         logger.warning("story_generation_failed reason=%s: %s", type(e).__name__, e)
         return fallback, f"story:{type(e).__name__}"
 

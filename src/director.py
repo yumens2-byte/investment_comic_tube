@@ -12,6 +12,7 @@ import os
 
 from src.drive_manager import fetch_latest_episode_state, start_episode
 from src.market_regime import select_villain
+from src.quota import is_quota_exhausted
 from src.story import build_storyboard
 
 logger = logging.getLogger(__name__)
@@ -41,6 +42,9 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
         response = client.models.generate_content(model=NARRATION_MODEL, contents=prompt)
         polished = (response.text or "").strip()
     except Exception as e:  # noqa: BLE001 - 외부 API 실패는 규칙 문장으로 폴백
+        if is_quota_exhausted(e):
+            logger.warning("narration_polish_aborted reason=quota_exhausted")
+            return base_sentence, "narration:quota_exhausted"
         reason = f"narration:{type(e).__name__}"
         logger.warning("narration_polish_failed reason=%s: %s", type(e).__name__, e)
         return base_sentence, reason

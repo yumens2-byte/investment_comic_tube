@@ -21,6 +21,11 @@ logger = logging.getLogger(__name__)
 
 SEGMENT_DURATION_SEC = 5.0
 MIN_SEGMENT_SEC = 3.5
+# 비트별 길이 상한. 내레이션이 길어도 이 이상은 늘어나지 않고 속도로 흡수한다.
+# 실측상 Gemini 가 25~45자 제약을 어겨 9.6초짜리 문장을 만든 적이 있고,
+# 그 비트만 남들의 1.5배가 되어 리듬이 무너졌다.
+MAX_SEGMENT_SEC = 7.0
+SEGMENT_ATEMPO_MAX = 1.6
 AUDIO_TAIL_PAD_SEC = 0.6
 
 # Lyria 등 생성 도구가 .mp4 컨테이너로 오디오를 내보내는 경우가 있어 포함한다.
@@ -70,7 +75,16 @@ HOOK_SHAKE_PAD = 1.10         # 흔들림 여유분만큼 확대 후 크롭
 HOOK_FONT_SIZE = 86
 HOOK_FONT_COLOR = "0xFFEE00"  # 강렬 옐로우
 HOOK_WRAP_CHARS = 13          # 한국어 기준 1080px 에 들어가는 글자수
+# 자막을 화면 중앙에 두면 클로즈업된 EDT 의 얼굴(입/송곳니)을 덮어 임팩트가 반감된다.
+# 하단 1/3 지점에 배치하고, 이미지 프롬프트에서도 하단을 비우도록 요구한다.
+HOOK_TEXT_Y_RATIO = 0.68
 ATEMPO_MAX = 1.5              # 3초 초과 내레이션 압축 상한
+
+# 최종 음량 정규화. YouTube 는 -14 LUFS 기준으로 재정규화하므로 맞춰 둔다.
+# 회차마다 체감 음량이 달라지는 문제와 클리핑(-1.9dB 근접 사례)을 함께 막는다.
+LOUDNORM_TARGET_I = "-14"
+LOUDNORM_TRUE_PEAK = "-1.5"
+LOUDNORM_LRA = "11"
 
 SFX_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".mp4"}
 
@@ -419,7 +433,7 @@ def _hook_video_filter(duration: float, caption_file: Path) -> str:
         f"drawtext={font_opt}textfile='{caption_file.as_posix()}':expansion=none:"
         f"fontcolor={HOOK_FONT_COLOR}:fontsize={HOOK_FONT_SIZE}:"
         "borderw=8:bordercolor=black:line_spacing=14:"
-        "x=(w-text_w)/2:y=(h-text_h)/2"
+        f"x=(w-text_w)/2:y=h*{HOOK_TEXT_Y_RATIO}-text_h/2"
     )
 
 
@@ -474,6 +488,10 @@ def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
             os.remove(mixed_path)
         return
 
+    if not os.path.exists(mixed_path):
+        logger.warning("bgm_output_missing -- keeping original audio")
+        return
+
     os.replace(mixed_path, video_path)
     logger.info("bgm_applied source=%s", bgm_path)
 
@@ -481,6 +499,41 @@ def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
 def _font_opt() -> str:
     font = find_kr_font()
     return f"fontfile='{font}':" if font else ""
+
+
+def _normalize_audio(video_path: str, ffmpeg_log: Path) -> None:
+    """최종 음량을 정규화한다.
+
+    회차마다 내레이션/BGM 조합이 달라 체감 음량이 들쭉날쭉하고,
+    최대 음량이 -1.9dB 까지 올라가 클리핑에 근접한 적이 있다.
+    YouTube 재정규화 기준(-14 LUFS)에 맞춰 미리 정돈한다.
+    실패하면 원본을 그대로 두어 영상 자체는 보존한다.
+    """
+    normalized = f"{video_path}.norm.mp4"
+    cmd = [
+        "ffmpeg", "-y", "-i", video_path,
+        "-af", (
+            f"loudnorm=I={LOUDNORM_TARGET_I}:TP={LOUDNORM_TRUE_PEAK}:LRA={LOUDNORM_LRA}"
+        ),
+        "-c:v", "copy", "-c:a", "aac", "-b:a", "192k",
+        normalized,
+    ]
+    try:
+        _run_ffmpeg(cmd, ffmpeg_log, append=True)
+    except Exception as e:  # noqa: BLE001 - 정규화 실패는 원본 유지로 폴백
+        logger.warning("loudnorm_failed reason=%s: %s -- keeping original audio",
+                       type(e).__name__, e)
+        if os.path.exists(normalized):
+            os.remove(normalized)
+        return
+
+    # ffmpeg 가 성공을 보고해도 산출물이 없을 수 있다. 없으면 원본을 유지한다.
+    if not os.path.exists(normalized):
+        logger.warning("loudnorm_output_missing -- keeping original audio")
+        return
+
+    os.replace(normalized, video_path)
+    logger.info("loudnorm_applied target_i=%s tp=%s", LOUDNORM_TARGET_I, LOUDNORM_TRUE_PEAK)
 
 
 def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> None:
@@ -583,6 +636,7 @@ def _render_segment(
     ffmpeg_log: Path,
     append: bool,
     zoom_in: bool = True,
+    narration_dur: float | None = None,
 ) -> None:
     """이미지 1장 + (있으면) 내레이션으로 장면 하나를 렌더링한다.
 
@@ -601,11 +655,22 @@ def _render_segment(
     else:
         cmd += ["-f", "lavfi", "-i", "anullsrc=r=44100:cl=stereo"]
 
+    # 내레이션이 장면 길이보다 길면 잘라내지 않고 속도로 흡수한다.
+    # 짧으면 무음으로 채워 장면 길이를 정확히 맞춘다.
+    audio_filter = f"apad=whole_dur={duration:.3f}"
+    if audio_path and narration_dur and narration_dur > duration + 0.05:
+        tempo = min(SEGMENT_ATEMPO_MAX, narration_dur / duration)
+        audio_filter = f"atempo={tempo:.3f},apad=whole_dur={duration:.3f}"
+        logger.info(
+            "segment_audio_compressed narration=%.2f target=%.2f tempo=%.3f",
+            narration_dur, duration, tempo,
+        )
+
     cmd += [
         "-vf", video_filter,
         "-c:v", "libx264", "-t", f"{duration:.3f}", "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-ar", "44100", "-ac", "2",
-        "-af", f"apad=whole_dur={duration:.3f}",
+        "-af", audio_filter,
         str(segment_path),
     ]
     _run_ffmpeg(cmd, ffmpeg_log, append=append)
@@ -639,10 +704,14 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
 
         audio_path = scene.get("audio")
         duration = SEGMENT_DURATION_SEC
+        narration_dur = None
         if audio_path:
-            probed = _probe_duration(audio_path)
-            if probed:
-                duration = max(MIN_SEGMENT_SEC, probed + AUDIO_TAIL_PAD_SEC)
+            narration_dur = _probe_duration(audio_path)
+            if narration_dur:
+                duration = max(
+                    MIN_SEGMENT_SEC,
+                    min(MAX_SEGMENT_SEC, narration_dur + AUDIO_TAIL_PAD_SEC),
+                )
 
         segment_path = tmp_dir / f"segment_{idx}.mp4"
         if scene.get("is_hook"):
@@ -667,6 +736,7 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
             ffmpeg_log=ffmpeg_log,
             append=bool(segment_paths),
             zoom_in=(idx % 2 == 0),
+            narration_dur=narration_dur,
         )
         segment_paths.append(segment_path)
 
@@ -750,6 +820,9 @@ def render_video(
         _apply_bgm(output_path, bgm_path, ffmpeg_log)
     else:
         logger.info("bgm_skipped reason=no_bgm_file")
+
+    # BGM 합성까지 끝난 뒤 최종 음량을 맞춘다
+    _normalize_audio(output_path, ffmpeg_log)
 
     duration = _probe_duration(output_path)
     logger.info(
