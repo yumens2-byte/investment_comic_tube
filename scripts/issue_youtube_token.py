@@ -38,7 +38,12 @@ import sys
 
 VERSION = "1.0.0"
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload"]
+# 업로드 외에 재생목록 추가/썸네일 설정까지 하려면 스코프를 넓혀야 한다.
+# playlistItems.insert 는 youtube.upload 로는 403 이 난다.
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.force-ssl",
+]
 
 
 def build_client_config(client_id: str, client_secret: str) -> dict:
