@@ -46,6 +46,14 @@ LOGO_STEM = "logo"          # assets/brand/logo.png 는 오버레이 전용
 LOGO_WIDTH_RATIO = 0.18     # 화면 폭 대비 로고 크기
 LOGO_MARGIN_PX = 60
 
+# 로고 배경 자동 제거.
+# 이미지 생성 모델은 투명 배경을 만들지 못해 단색 배경이 딸려 오는데,
+# 그대로 오버레이하면 표지 위에 색 사각형이 얹힌다.
+# 알파 채널이 없는 로고에 한해 지정 색을 키잉해 투명화한다.
+LOGO_CHROMA_KEY = os.getenv("LOGO_CHROMA_KEY", "0xFF00FF")
+LOGO_CHROMA_SIMILARITY = "0.30"
+LOGO_CHROMA_BLEND = "0.10"
+
 # Ken Burns 효과: 같은 이미지를 여러 비트에 재사용해도 화면이 단조롭지 않도록
 # 장면마다 줌 방향을 교대한다 (비용 절감을 위한 이미지 재사용의 보완책).
 KEN_BURNS_FPS = 30
@@ -317,6 +325,23 @@ def _find_brand_asset(stem_is_logo: bool) -> str | None:
     return str(random.choice(covers)) if covers else None
 
 
+def _has_alpha_channel(path: str) -> bool:
+    """이미지에 알파 채널이 있는지 확인한다."""
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=pix_fmt",
+        "-of", "csv=p=0",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=15)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return False
+    pix_fmt = result.stdout.strip()
+    return any(tag in pix_fmt for tag in ("rgba", "bgra", "argb", "abgr", "ya", "pal8"))
+
+
 def _render_outro_segment(segment_path: Path, ffmpeg_log: Path, append: bool) -> bool:
     """아웃트로 엔드카드를 렌더링한다. 표지 이미지가 없으면 건너뛴다."""
     cover = _find_brand_asset(stem_is_logo=False)
@@ -340,9 +365,20 @@ def _render_outro_segment(segment_path: Path, ffmpeg_log: Path, append: bool) ->
         # 로고는 AI 생성 글자가 뭉개지는 문제를 피하려고 고정 PNG 를 오버레이한다
         cmd += ["-i", logo]
         logo_w = int(1080 * LOGO_WIDTH_RATIO)
+
+        # 알파가 없으면 단색 배경이 사각형으로 얹히므로 키잉으로 제거한다
+        if _has_alpha_channel(logo):
+            logo_chain = f"[2:v]scale={logo_w}:-1[lg]"
+        else:
+            logger.info("logo_chroma_key_applied color=%s", LOGO_CHROMA_KEY)
+            logo_chain = (
+                f"[2:v]colorkey={LOGO_CHROMA_KEY}:{LOGO_CHROMA_SIMILARITY}:{LOGO_CHROMA_BLEND},"
+                f"format=rgba,scale={logo_w}:-1[lg]"
+            )
+
         filter_complex = (
             f"[0:v]{base}[bg];"
-            f"[2:v]scale={logo_w}:-1[lg];"
+            f"{logo_chain};"
             f"[bg][lg]overlay=W-w-{LOGO_MARGIN_PX}:H-h-{LOGO_MARGIN_PX}[vout]"
         )
     else:

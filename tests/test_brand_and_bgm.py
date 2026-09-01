@@ -199,3 +199,66 @@ class OutroPlacementTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LogoChromaKeyTest(unittest.TestCase):
+    def _make_image(self, path, alpha: bool):
+        fmt = "rgba" if alpha else "rgb24"
+        subprocess.run(
+            ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=0xFF00FF:s=64x64:d=1",
+             "-frames:v", "1", "-pix_fmt", fmt, str(path), "-loglevel", "error"],
+            check=True,
+        )
+
+    def test_detects_alpha_channel(self):
+        from src.renderer import _has_alpha_channel
+
+        with tempfile.TemporaryDirectory() as d:
+            opaque = Path(d) / "opaque.png"
+            self._make_image(opaque, alpha=False)
+            self.assertFalse(_has_alpha_channel(str(opaque)))
+
+    def test_detects_missing_file_as_no_alpha(self):
+        from src.renderer import _has_alpha_channel
+
+        self.assertFalse(_has_alpha_channel("/nonexistent/logo.png"))
+
+    @patch("src.renderer._run_ffmpeg")
+    @patch("src.renderer._has_alpha_channel", return_value=False)
+    def test_opaque_logo_gets_colorkey(self, _alpha, run):
+        with tempfile.TemporaryDirectory() as d:
+            _make(d, "cover.png")
+            _make(d, "logo.png")
+            with patch.dict("os.environ", {"BRAND_DIR": d}, clear=True):
+                _render_outro_segment(Path(d) / "o.mp4", Path(d) / "log.txt", False)
+        cmd = " ".join(run.call_args.args[0])
+        # 배경이 사각형으로 얹히던 사고의 재발 방지
+        self.assertIn("colorkey=", cmd)
+        self.assertIn("format=rgba", cmd)
+
+    @patch("src.renderer._run_ffmpeg")
+    @patch("src.renderer._has_alpha_channel", return_value=True)
+    def test_transparent_logo_skips_colorkey(self, _alpha, run):
+        with tempfile.TemporaryDirectory() as d:
+            _make(d, "cover.png")
+            _make(d, "logo.png")
+            with patch.dict("os.environ", {"BRAND_DIR": d}, clear=True):
+                _render_outro_segment(Path(d) / "o.mp4", Path(d) / "log.txt", False)
+        self.assertNotIn("colorkey=", " ".join(run.call_args.args[0]))
+
+    @patch("src.renderer._run_ffmpeg")
+    @patch("src.renderer._has_alpha_channel", return_value=False)
+    def test_chroma_key_color_is_configurable(self, _alpha, run):
+        with tempfile.TemporaryDirectory() as d:
+            _make(d, "cover.png")
+            _make(d, "logo.png")
+            env = {"BRAND_DIR": d, "LOGO_CHROMA_KEY": "0x00FF00"}
+            with patch.dict("os.environ", env, clear=True):
+                import importlib
+
+                from src import renderer
+                importlib.reload(renderer)
+                renderer._run_ffmpeg = run
+                renderer._has_alpha_channel = lambda p: False
+                renderer._render_outro_segment(Path(d) / "o.mp4", Path(d) / "log.txt", False)
+        self.assertIn("0x00FF00", " ".join(run.call_args.args[0]))
