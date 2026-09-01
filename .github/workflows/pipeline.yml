@@ -30,7 +30,8 @@ jobs:
       - name: Install System Dependencies (FFmpeg)
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-noto-cjk
+          sudo apt-get install -y ffmpeg fonts-noto-cjk fonts-nanum
+          fc-cache -f
 
       - name: Install Python Dependencies
         run: |
