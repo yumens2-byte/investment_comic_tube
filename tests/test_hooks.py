@@ -155,14 +155,16 @@ class SfxSlotTest(unittest.TestCase):
         with patch.dict("os.environ", {"SFX_DIR": "/nonexistent/sfx"}, clear=True):
             self.assertIsNone(_find_sfx("hook_a"))
 
-    def test_exact_type_match_preferred(self):
+    @patch("src.renderer._has_audio_stream", return_value=True)
+    def test_exact_type_match_preferred(self, _probe):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "hook_a.wav").write_bytes(b"x")
             (Path(d) / "hook_b.wav").write_bytes(b"x")
             with patch.dict("os.environ", {"SFX_DIR": d}, clear=True):
                 self.assertTrue(_find_sfx("hook_b").endswith("hook_b.wav"))
 
-    def test_falls_back_to_any_file_when_type_missing(self):
+    @patch("src.renderer._has_audio_stream", return_value=True)
+    def test_falls_back_to_any_file_when_type_missing(self, _probe):
         with tempfile.TemporaryDirectory() as d:
             (Path(d) / "generic.wav").write_bytes(b"x")
             with patch.dict("os.environ", {"SFX_DIR": d}, clear=True):

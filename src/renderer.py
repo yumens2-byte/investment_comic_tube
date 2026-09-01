@@ -23,7 +23,28 @@ SEGMENT_DURATION_SEC = 5.0
 MIN_SEGMENT_SEC = 3.5
 AUDIO_TAIL_PAD_SEC = 0.6
 
-BGM_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg"}
+# Lyria 등 생성 도구가 .mp4 컨테이너로 오디오를 내보내는 경우가 있어 포함한다.
+# ffmpeg 는 컨테이너와 무관하게 오디오 스트림을 뽑아낼 수 있다.
+BGM_EXTENSIONS = {".mp3", ".m4a", ".wav", ".aac", ".ogg", ".mp4"}
+
+# 빌런별 BGM 파일명 접두사. 예: bgm_debt_titan_01.mp4
+BGM_VILLAIN_SLUG = {
+    "Debt Titan": "debt_titan",
+    "Chaos Reaper": "chaos_reaper",
+    "Bull Brute": "bull_brute",
+}
+BGM_COMMON_PREFIX = "bgm_common"
+
+# --- 아웃트로(엔드카드) ---
+# 인트로가 아니라 아웃트로에만 넣는다. 쇼츠는 0~3초 이탈이 결정적이라
+# 앞에 공통 브랜드 화면을 두면 훅이 밀려 이탈률이 올라간다.
+OUTRO_DURATION_SEC = 2.0
+OUTRO_ZOOM_SPEED = 0.0008
+OUTRO_MAX_ZOOM = 1.08
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+LOGO_STEM = "logo"          # assets/brand/logo.png 는 오버레이 전용
+LOGO_WIDTH_RATIO = 0.18     # 화면 폭 대비 로고 크기
+LOGO_MARGIN_PX = 60
 
 # Ken Burns 효과: 같은 이미지를 여러 비트에 재사용해도 화면이 단조롭지 않도록
 # 장면마다 줌 방향을 교대한다 (비용 절감을 위한 이미지 재사용의 보완책).
@@ -43,7 +64,7 @@ HOOK_FONT_COLOR = "0xFFEE00"  # 강렬 옐로우
 HOOK_WRAP_CHARS = 13          # 한국어 기준 1080px 에 들어가는 글자수
 ATEMPO_MAX = 1.5              # 3초 초과 내레이션 압축 상한
 
-SFX_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg"}
+SFX_EXTENSIONS = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".mp4"}
 
 # 한국어 자막 폰트.
 # drawtext 에 fontfile 을 지정하지 않으면 fontconfig 가 기본 폰트를 고르는데,
@@ -189,7 +210,39 @@ def _probe_duration(path: str) -> float | None:
         return None
 
 
-def _find_bgm() -> str | None:
+def _has_audio_stream(path: str) -> bool:
+    """파일에 실제 오디오 스트림이 있는지 확인한다.
+
+    .mp4 를 허용하면서 필요해졌다. 오디오가 없는 파일을 BGM/SFX 로 넘기면
+    filter_complex 가 'matches no streams' 로 실패해 렌더링 전체가 무너진다.
+    """
+    cmd = [
+        "ffprobe", "-v", "error",
+        "-select_streams", "a:0",
+        "-show_entries", "stream=codec_type",
+        "-of", "csv=p=0",
+        path,
+    ]
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, timeout=15)
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return False
+    return "audio" in result.stdout
+
+
+def _audio_candidates(directory: Path, extensions: set[str]) -> list[Path]:
+    """오디오 스트림이 실제로 있는 파일만 골라 반환한다."""
+    files = [p for p in sorted(directory.iterdir()) if p.suffix.lower() in extensions]
+    usable = []
+    for path in files:
+        if _has_audio_stream(str(path)):
+            usable.append(path)
+        else:
+            logger.warning("audio_file_skipped path=%s reason=no_audio_stream", path.name)
+    return usable
+
+
+def _find_bgm(villain: str | None = None) -> str | None:
     """BGM 디렉터리에서 배경음 파일을 하나 무작위로 고른다.
 
     파일이 없으면 None -- 이 경우 내레이션만 남는다.
@@ -199,10 +252,31 @@ def _find_bgm() -> str | None:
     bgm_dir = Path(os.getenv("BGM_DIR", "assets/bgm"))
     if not bgm_dir.is_dir():
         return None
-    candidates = sorted(p for p in bgm_dir.iterdir() if p.suffix.lower() in BGM_EXTENSIONS)
+
+    candidates = _audio_candidates(bgm_dir, BGM_EXTENSIONS)
     if not candidates:
         return None
-    return str(random.choice(candidates))
+
+    # 1순위: 이번 회차 빌런 전용 곡 (bgm_debt_titan_01 등)
+    slug = BGM_VILLAIN_SLUG.get(villain or "")
+    if slug:
+        matched = [p for p in candidates if p.stem.startswith(f"bgm_{slug}")]
+        if matched:
+            chosen = random.choice(matched)
+            logger.info("bgm_matched villain=%s file=%s", villain, chosen.name)
+            return str(chosen)
+
+    # 2순위: 공통 곡
+    common = [p for p in candidates if p.stem.startswith(BGM_COMMON_PREFIX)]
+    if common:
+        chosen = random.choice(common)
+        logger.info("bgm_matched villain=%s file=%s (common)", villain, chosen.name)
+        return str(chosen)
+
+    # 3순위: 아무거나
+    chosen = random.choice(candidates)
+    logger.info("bgm_matched villain=%s file=%s (any)", villain, chosen.name)
+    return str(chosen)
 
 
 def _find_sfx(name: str | None) -> str | None:
@@ -214,7 +288,7 @@ def _find_sfx(name: str | None) -> str | None:
     sfx_dir = Path(os.getenv("SFX_DIR", "assets/sfx"))
     if not sfx_dir.is_dir():
         return None
-    candidates = sorted(p for p in sfx_dir.iterdir() if p.suffix.lower() in SFX_EXTENSIONS)
+    candidates = _audio_candidates(sfx_dir, SFX_EXTENSIONS)
     if not candidates:
         return None
     if name:
@@ -222,6 +296,69 @@ def _find_sfx(name: str | None) -> str | None:
         if exact:
             return str(exact[0])
     return str(random.choice(candidates))
+
+
+def _find_brand_asset(stem_is_logo: bool) -> str | None:
+    """브랜드 디렉터리에서 아웃트로 표지 또는 로고를 찾는다.
+
+    'logo' 라는 이름의 파일은 오버레이 전용으로 예약하고,
+    나머지 이미지는 전부 아웃트로 표지 후보로 본다(여러 장이면 무작위 회전).
+    """
+    brand_dir = Path(os.getenv("BRAND_DIR", "assets/brand"))
+    if not brand_dir.is_dir():
+        return None
+
+    images = [p for p in sorted(brand_dir.iterdir()) if p.suffix.lower() in IMAGE_EXTENSIONS]
+    if stem_is_logo:
+        logos = [p for p in images if p.stem.lower() == LOGO_STEM]
+        return str(logos[0]) if logos else None
+
+    covers = [p for p in images if p.stem.lower() != LOGO_STEM]
+    return str(random.choice(covers)) if covers else None
+
+
+def _render_outro_segment(segment_path: Path, ffmpeg_log: Path, append: bool) -> bool:
+    """아웃트로 엔드카드를 렌더링한다. 표지 이미지가 없으면 건너뛴다."""
+    cover = _find_brand_asset(stem_is_logo=False)
+    if not cover:
+        logger.info("outro_skipped reason=no_cover_image")
+        return False
+
+    logo = _find_brand_asset(stem_is_logo=True)
+    frames = max(1, int(OUTRO_DURATION_SEC * KEN_BURNS_FPS))
+    zoom = f"min(1+{OUTRO_ZOOM_SPEED}*on,{OUTRO_MAX_ZOOM})"
+    base = (
+        "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
+        f"zoompan=z='{zoom}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
+        f":d={frames}:s=1080x1920:fps={KEN_BURNS_FPS}"
+    )
+
+    cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{OUTRO_DURATION_SEC:.3f}", "-i", cover]
+    cmd += ["-f", "lavfi", "-t", f"{OUTRO_DURATION_SEC:.3f}", "-i", "anullsrc=r=44100:cl=stereo"]
+
+    if logo:
+        # 로고는 AI 생성 글자가 뭉개지는 문제를 피하려고 고정 PNG 를 오버레이한다
+        cmd += ["-i", logo]
+        logo_w = int(1080 * LOGO_WIDTH_RATIO)
+        filter_complex = (
+            f"[0:v]{base}[bg];"
+            f"[2:v]scale={logo_w}:-1[lg];"
+            f"[bg][lg]overlay=W-w-{LOGO_MARGIN_PX}:H-h-{LOGO_MARGIN_PX}[vout]"
+        )
+    else:
+        filter_complex = f"[0:v]{base}[vout]"
+
+    cmd += [
+        "-filter_complex", filter_complex,
+        "-map", "[vout]", "-map", "1:a",
+        "-c:v", "libx264", "-t", f"{OUTRO_DURATION_SEC:.3f}", "-pix_fmt", "yuv420p",
+        "-c:a", "aac", "-ar", "44100", "-ac", "2",
+        str(segment_path),
+    ]
+    _run_ffmpeg(cmd, ffmpeg_log, append=append)
+    logger.info("outro_rendered cover=%s logo=%s duration=%.2f",
+                Path(cover).name, Path(logo).name if logo else "none", OUTRO_DURATION_SEC)
+    return True
 
 
 def _hook_video_filter(duration: float, caption_file: Path) -> str:
@@ -500,6 +637,14 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
     if not segment_paths:
         raise ValueError("no renderable scenes")
 
+    # 아웃트로는 실패해도 본편을 살린다(브랜딩은 부가 요소다)
+    outro_path = tmp_dir / "segment_outro.mp4"
+    try:
+        if _render_outro_segment(outro_path, ffmpeg_log, append=True):
+            segment_paths.append(outro_path)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("outro_render_failed reason=%s: %s -- 본편만 사용", type(e).__name__, e)
+
     _concat_segments(segment_paths, output_path, tmp_dir, ffmpeg_log)
 
 
@@ -564,7 +709,7 @@ def render_video(
     else:
         _render_text_card(script_data, output_path, ffmpeg_log)
 
-    bgm_path = _find_bgm()
+    bgm_path = _find_bgm(script_data.get("villain"))
     if bgm_path:
         _apply_bgm(output_path, bgm_path, ffmpeg_log)
     else:

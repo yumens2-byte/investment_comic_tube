@@ -61,7 +61,8 @@ class FindBgmTest(unittest.TestCase):
             with patch.dict("os.environ", {"BGM_DIR": directory}, clear=True):
                 self.assertIsNone(_find_bgm())
 
-    def test_picks_an_audio_file(self):
+    @patch("src.renderer._has_audio_stream", return_value=True)
+    def test_picks_an_audio_file(self, _probe):
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "track_a.mp3").write_bytes(b"fake")
             (Path(directory) / "track_b.wav").write_bytes(b"fake")
@@ -74,10 +75,11 @@ class FindBgmTest(unittest.TestCase):
 
 
 class RenderBgmIntegrationTest(unittest.TestCase):
+    @patch("src.renderer._has_audio_stream", return_value=True)
     @patch("src.renderer.subprocess.run")
     @patch("src.renderer.os.path.getsize", return_value=51200)
     @patch("src.renderer.os.replace")
-    def test_bgm_applied_when_file_present(self, os_replace, _getsize, run):
+    def test_bgm_applied_when_file_present(self, os_replace, _getsize, run, _probe):
         run.return_value = MagicMock(returncode=0, stdout="", stderr="")
 
         from src.renderer import render_video
