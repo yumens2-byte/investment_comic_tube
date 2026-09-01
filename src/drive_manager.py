@@ -17,7 +17,13 @@ from src.db_client import get_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_STATE = {"episode": 102, "villain": "Debt Titan", "theme": "긴축의 심화와 방어선 사수"}
+DEFAULT_STATE = {
+    "episode": 102,
+    "villain": None,
+    "theme": None,
+    "story_state": None,
+    "market_snapshot": None,
+}
 
 
 def _now_iso() -> str:
@@ -31,7 +37,7 @@ def fetch_latest_episode_state() -> dict:
         client = get_client()
         result = (
             client.table("episodes")
-            .select("episode_no, status")
+            .select("episode_no, status, villain, story_state, market_snapshot")
             .order("episode_no", desc=True)
             .limit(1)
             .execute()
@@ -48,7 +54,16 @@ def fetch_latest_episode_state() -> dict:
     latest = rows[0]
     state = dict(DEFAULT_STATE)
     state["episode"] = latest.get("episode_no", DEFAULT_STATE["episode"])
-    logger.info("episode_state_fetch_finished episode=%s status=%s", state["episode"], latest.get("status"))
+    state["villain"] = latest.get("villain")
+    state["story_state"] = latest.get("story_state")
+    state["market_snapshot"] = latest.get("market_snapshot")
+    logger.info(
+        "episode_state_fetch_finished episode=%s status=%s prev_villain=%s has_story_state=%s",
+        state["episode"],
+        latest.get("status"),
+        state["villain"],
+        state["story_state"] is not None,
+    )
     return state
 
 
@@ -67,6 +82,9 @@ def start_episode(script_data: dict) -> str:
             "revision": 1,
             "status": "script_ready",
             "market_as_of": now,
+            "villain": script_data.get("villain"),
+            "market_snapshot": script_data.get("market_snapshot"),
+            "story_state": script_data.get("story_state"),
             "created_at": now,
             "updated_at": now,
         }

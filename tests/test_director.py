@@ -3,9 +3,30 @@ from unittest.mock import MagicMock, patch
 
 from src.director import generate_connected_script
 
-MARKET_DATA_HIGH_TNX = {"TNX": {"close": 4.8}, "VIX": {"close": 15.0}}
-MARKET_DATA_HIGH_VIX = {"TNX": {"close": 4.0}, "VIX": {"close": 30.0}}
-MARKET_DATA_CALM = {"TNX": {"close": 4.0}, "VIX": {"close": 15.0}}
+# 금리 압력 우세: TNX가 20일 이평 위로 크게 튐
+MARKET_DATA_HIGH_TNX = {
+    "TNX": {"close": 4.8, "change_pct": 0.5, "sma20": 4.4, "dev_pct": 9.0},
+    "VIX": {"close": 15.0, "change_pct": 0.0, "sma20": 15.0, "dev_pct": 0.0},
+    "NASDAQ": {"close": 26000, "change_pct": 0.0, "sma20": 26000, "dev_pct": 0.0},
+    "SPX": {"close": 5800, "change_pct": 0.0, "sma20": 5800, "dev_pct": 0.0},
+    "DXY": {"close": 104, "change_pct": 0.1, "sma20": 103, "dev_pct": 1.0},
+}
+# 변동성 우세: VIX 급등 + 지수 급락
+MARKET_DATA_HIGH_VIX = {
+    "TNX": {"close": 4.0, "change_pct": 0.0, "sma20": 4.0, "dev_pct": 0.0},
+    "VIX": {"close": 35.0, "change_pct": 20.0, "sma20": 18.0, "dev_pct": 94.0},
+    "NASDAQ": {"close": 24000, "change_pct": -3.5, "sma20": 26000, "dev_pct": -7.7},
+    "SPX": {"close": 5400, "change_pct": -3.0, "sma20": 5800, "dev_pct": -6.9},
+    "DXY": {"close": 103, "change_pct": 0.0, "sma20": 103, "dev_pct": 0.0},
+}
+# 모멘텀 우세: 지수 상승 + 이평 상회, 금리/변동성 잠잠
+MARKET_DATA_CALM = {
+    "TNX": {"close": 4.0, "change_pct": 0.0, "sma20": 4.0, "dev_pct": 0.0},
+    "VIX": {"close": 13.0, "change_pct": -2.0, "sma20": 14.0, "dev_pct": -7.0},
+    "NASDAQ": {"close": 27000, "change_pct": 2.0, "sma20": 26000, "dev_pct": 3.8},
+    "SPX": {"close": 6000, "change_pct": 1.8, "sma20": 5800, "dev_pct": 3.4},
+    "DXY": {"close": 102, "change_pct": -0.2, "sma20": 103, "dev_pct": -1.0},
+}
 
 
 class VillainSelectionTest(unittest.TestCase):

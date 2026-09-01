@@ -11,6 +11,7 @@ import logging
 import os
 
 from src.drive_manager import fetch_latest_episode_state, start_episode
+from src.market_regime import select_villain
 from src.story import build_storyboard
 
 logger = logging.getLogger(__name__)
@@ -56,21 +57,20 @@ def generate_connected_script(market_data: dict) -> dict:
     prev_state = fetch_latest_episode_state()
     next_ep = prev_state.get("episode", 102) + 1
 
-    tnx = market_data.get("TNX", {}).get("close", 0)
-    vix = market_data.get("VIX", {}).get("close", 0)
-
-    if tnx > 4.5:
-        villain, theme = "Debt Titan", "긴축의 심화와 방어선 사수"
-    elif vix > 25.0:
-        villain, theme = "Chaos Reaper", "변동성 폭발과 시장의 광기"
-    else:
-        villain, theme = "Bull Brute", "유동성 장세와 돌파 매수"
+    # 고정 임계값 대신 복합 스코어로 판정한다 (빌런 고착 방지)
+    villain, theme, scores = select_villain(market_data)
 
     base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
     narration, degraded_reason = _polish_narration(base_narration)
 
-    storyboard, story_degraded = build_storyboard(market_data, villain, theme)
+    storyboard, story_state, story_degraded = build_storyboard(
+        market_data, villain, theme, prev_state
+    )
     degraded_reasons = [r for r in (degraded_reason, story_degraded) if r]
+
+    # 시장 수치를 그대로 보관해 다음 회차가 전일 대비 서사를 만들 수 있게 한다
+    market_snapshot = dict(market_data)
+    market_snapshot["_villain_scores"] = scores
 
     script_data = {
         "episode": next_ep,
@@ -78,10 +78,15 @@ def generate_connected_script(market_data: dict) -> dict:
         "theme": theme,
         "narration": narration,
         "storyboard": storyboard,
+        "market_snapshot": market_snapshot,
+        "story_state": story_state,
         "degraded_reason": ";".join(degraded_reasons) if degraded_reasons else None,
     }
 
-    logger.info("script_generation_finished villain=%s theme=%s", villain, theme)
+    logger.info(
+        "script_generation_finished episode=%s villain=%s theme=%s streak=%s",
+        next_ep, villain, theme, story_state["villain_streak"],
+    )
 
     episode_id = start_episode(script_data)
     script_data["episode_id"] = episode_id

@@ -37,7 +37,7 @@ class ParseNarrationsTest(unittest.TestCase):
 class BuildStoryboardTest(unittest.TestCase):
     @patch.dict("os.environ", {}, clear=True)
     def test_no_api_key_uses_fallback_but_still_six_beats(self):
-        storyboard, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
+        storyboard, _state, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
 
         self.assertEqual(len(storyboard), BEAT_COUNT)
         self.assertEqual(degraded, "story:no_api_key")
@@ -52,7 +52,7 @@ class BuildStoryboardTest(unittest.TestCase):
             text='["문장0","문장1","문장2","문장3","문장4","문장5"]'
         )
 
-        storyboard, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
+        storyboard, _state, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
 
         self.assertIsNone(degraded)
         self.assertEqual([b["narration"] for b in storyboard], SIX)
@@ -64,7 +64,7 @@ class BuildStoryboardTest(unittest.TestCase):
     def test_malformed_response_falls_back(self, client_cls):
         client_cls.return_value.models.generate_content.return_value = MagicMock(text="쓰레기 응답")
 
-        storyboard, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
+        storyboard, _state, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
 
         self.assertEqual(degraded, "story:malformed_response")
         self.assertEqual(len(storyboard), BEAT_COUNT)
@@ -74,7 +74,7 @@ class BuildStoryboardTest(unittest.TestCase):
     def test_api_error_falls_back(self, client_cls):
         client_cls.return_value.models.generate_content.side_effect = RuntimeError("boom")
 
-        storyboard, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
+        storyboard, _state, degraded = build_storyboard(MARKET, "Debt Titan", "긴축")
 
         self.assertEqual(degraded, "story:RuntimeError")
         self.assertEqual(len(storyboard), BEAT_COUNT)

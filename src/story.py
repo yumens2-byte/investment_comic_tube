@@ -93,13 +93,26 @@ SLOT_SCENES = [
 ]
 
 
-def _fallback_narrations(villain: str, theme: str, market_data: dict) -> list[str]:
+def _fallback_narrations(
+    villain: str, theme: str, market_data: dict, prev_state: dict | None = None
+) -> list[str]:
     """규칙 기반 내레이션. Gemini 실패 시 사용한다."""
-    tnx = market_data.get("TNX", {}).get("close", 0)
-    vix = market_data.get("VIX", {}).get("close", 0)
+    tnx = market_data.get("TNX", {}).get("close")
+    vix = market_data.get("VIX", {}).get("close")
+    tnx_txt = tnx if tnx is not None else "확인불가"
+    vix_txt = vix if vix is not None else "확인불가"
+
+    prev_villain = (prev_state or {}).get("villain")
+    if prev_villain and prev_villain == villain:
+        second = f"{villain}은 아직 물러나지 않았다."
+    elif prev_villain:
+        second = f"{prev_villain}이 물러난 자리에 {villain}이 나타났다."
+    else:
+        second = f"그때 {villain}이 모습을 드러냈다."
+
     return [
-        f"오늘 시장, 10년물 금리 {tnx}에 변동성 지수 {vix}.",
-        f"그때 {villain}이 모습을 드러냈다.",
+        f"오늘 시장, 10년물 금리 {tnx_txt}에 변동성 지수 {vix_txt}.",
+        second,
         "지수는 흔들리고, 투자자들의 계좌가 비명을 질렀다.",
         "하지만 우리에겐 EDT가 있다.",
         f"{theme}. 정면으로 부딪힌다.",
@@ -130,9 +143,44 @@ def _parse_narrations(raw: str) -> list[str] | None:
     return lines
 
 
-def _generate_narrations(villain: str, theme: str, market_data: dict) -> tuple[list[str], str | None]:
+def _build_continuity_context(prev_state: dict | None, market_data: dict, villain: str = "") -> str:
+    """이전 회차와의 연결고리를 프롬프트용 문장으로 만든다."""
+    if not prev_state:
+        return "이번이 첫 회차다. 이전 회차 언급 없이 시작해라."
+
+    parts = []
+    prev_ep = prev_state.get("episode")
+    prev_villain = prev_state.get("villain")
+    if prev_ep and prev_villain:
+        parts.append(f"직전 {prev_ep}화의 빌런은 '{prev_villain}'이었다.")
+
+    story_state = prev_state.get("story_state") or {}
+    unresolved = story_state.get("unresolved")
+    streak = story_state.get("villain_streak")
+    if unresolved:
+        parts.append(f"직전 회차에서 해결되지 않은 위협: {unresolved}")
+    if isinstance(streak, int) and streak >= 2 and prev_villain == villain:
+        parts.append(f"'{villain}'은 이번이 {streak + 1}회 연속 등장이다. 장기전임을 반영해라.")
+
+    # 전일 대비 변화 서사
+    prev_snapshot = prev_state.get("market_snapshot") or {}
+    for key, label in (("TNX", "10년물 금리"), ("VIX", "VIX")):
+        now_v = (market_data.get(key) or {}).get("close")
+        old_v = (prev_snapshot.get(key) or {}).get("close")
+        if isinstance(now_v, (int, float)) and isinstance(old_v, (int, float)):
+            direction = "올랐다" if now_v > old_v else ("내렸다" if now_v < old_v else "그대로다")
+            parts.append(f"{label}는 직전 회차 {old_v}에서 {now_v}로 {direction}.")
+
+    if not parts:
+        return "이전 회차 정보가 부족하다. 이전 회차를 구체적으로 언급하지 마라."
+    return " ".join(parts)
+
+
+def _generate_narrations(
+    villain: str, theme: str, market_data: dict, prev_state: dict | None = None
+) -> tuple[list[str], str | None]:
     """Gemini로 내레이션 6줄을 생성한다. 실패 시 (폴백 문장, 사유)."""
-    fallback = _fallback_narrations(villain, theme, market_data)
+    fallback = _fallback_narrations(villain, theme, market_data, prev_state)
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -143,17 +191,24 @@ def _generate_narrations(villain: str, theme: str, market_data: dict) -> tuple[l
     except ImportError:
         return fallback, "story:google_genai_not_installed"
 
-    tnx = market_data.get("TNX", {}).get("close", 0)
-    vix = market_data.get("VIX", {}).get("close", 0)
-    nasdaq = market_data.get("NASDAQ", {}).get("change_pct", 0)
+    tnx = market_data.get("TNX", {}).get("close")
+    vix = market_data.get("VIX", {}).get("close")
+    nasdaq = market_data.get("NASDAQ", {}).get("change_pct")
+    spx = market_data.get("SPX", {}).get("change_pct")
+    dxy = market_data.get("DXY", {}).get("close")
+    gold = market_data.get("GOLD", {}).get("close")
+    continuity = _build_continuity_context(prev_state, market_data, villain)
 
     prompt = (
         "너는 한국어 주식투자 숏폼 영상의 내레이션 작가다. "
-        f"오늘 시장 데이터: 미국10년물금리 {tnx}, VIX {vix}, 나스닥 등락률 {nasdaq}%. "
+        f"오늘 시장 데이터: 미국10년물금리 {tnx}, VIX {vix}, 나스닥 등락률 {nasdaq}%, "
+        f"S&P500 등락률 {spx}%, 달러인덱스 {dxy}, 금 {gold}. "
         f"빌런은 '{villain}', 주제는 '{theme}'. 히어로는 체인소를 무기로 쓰는 호랑이 캐릭터 'EDT'다.\n"
+        f"[이전 회차 맥락] {continuity}\n"
         "아래 6개 장면 순서에 맞춰 각각 한 문장씩 한국어 내레이션을 써라.\n"
         "1) 시장 상황 제시 2) 빌런 등장 3) 시장 타격 4) EDT 등장 "
-        "5) 대결 6) 투자 교훈 마무리\n"
+        "5) 대결 6) 마무리 겸 다음 회차 예고(클리프행어)\n"
+        "6번 문장은 반드시 여운이나 다음 편에 대한 궁금증을 남기는 형태로 끝내라.\n"
         "각 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
         "과장된 투자 권유나 수익 보장 표현은 절대 쓰지 마라.\n"
         '반드시 다음 JSON 배열 형식으로만 출력해라. 설명이나 마크다운 없이: '
@@ -175,17 +230,40 @@ def _generate_narrations(villain: str, theme: str, market_data: dict) -> tuple[l
     return parsed, None
 
 
-def build_storyboard(market_data: dict, villain: str, theme: str) -> tuple[list[dict], str | None]:
-    """6비트 스토리보드와 폴백 사유를 반환한다.
+def build_story_state(villain: str, prev_state: dict | None, narrations: list[str]) -> dict:
+    """다음 회차가 이어받을 서사 상태를 만든다."""
+    prev = prev_state or {}
+    prev_story = prev.get("story_state") or {}
+    streak = 1
+    if prev.get("villain") == villain:
+        prev_streak = prev_story.get("villain_streak")
+        streak = (prev_streak + 1) if isinstance(prev_streak, int) else 2
+
+    return {
+        "villain": villain,
+        "villain_streak": streak,
+        # 마지막 비트가 클리프행어이므로 다음 회차의 '미해결 위협' 입력이 된다
+        "unresolved": narrations[-1] if narrations else None,
+    }
+
+
+def build_storyboard(
+    market_data: dict, villain: str, theme: str, prev_state: dict | None = None
+) -> tuple[list[dict], dict, str | None]:
+    """6비트 스토리보드, 다음 회차용 서사 상태, 폴백 사유를 반환한다.
 
     각 비트: {"beat", "scene", "narration"}
     """
-    logger.info("storyboard_started beats=%s", BEAT_COUNT)
-    narrations, degraded = _generate_narrations(villain, theme, market_data)
+    logger.info("storyboard_started beats=%s prev_villain=%s", BEAT_COUNT, (prev_state or {}).get("villain"))
+    narrations, degraded = _generate_narrations(villain, theme, market_data, prev_state)
 
     storyboard = [
         {"beat": beat, "scene": scene, "narration": narration}
         for (beat, scene), narration in zip(BEAT_SCENES, narrations, strict=True)
     ]
-    logger.info("storyboard_finished beats=%s degraded=%s", len(storyboard), degraded)
-    return storyboard, degraded
+    story_state = build_story_state(villain, prev_state, narrations)
+    logger.info(
+        "storyboard_finished beats=%s streak=%s degraded=%s",
+        len(storyboard), story_state["villain_streak"], degraded,
+    )
+    return storyboard, story_state, degraded
