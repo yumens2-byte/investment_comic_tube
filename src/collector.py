@@ -14,6 +14,8 @@ import logging
 
 import yfinance as yf
 
+from src.market_sources import fetch_fallback
+
 logger = logging.getLogger(__name__)
 
 # 서사 판정 및 내레이션에 사용하는 지표
@@ -33,7 +35,7 @@ HISTORY_PERIOD = "3mo"
 
 def _empty_metric() -> dict:
     """수집 실패 시의 표준 형태. 0.0 이 아니라 None 으로 '데이터 없음'을 명시한다."""
-    return {"close": None, "change_pct": None, "sma20": None, "dev_pct": None}
+    return {"close": None, "change_pct": None, "sma20": None, "dev_pct": None, "source": None}
 
 
 def _build_metric(hist) -> dict:
@@ -57,6 +59,7 @@ def _build_metric(hist) -> dict:
         "change_pct": round(change_pct, 2),
         "sma20": round(sma20, 2) if sma20 is not None else None,
         "dev_pct": round(dev_pct, 2) if dev_pct is not None else None,
+        "source": "yfinance",
     }
 
 
@@ -73,6 +76,19 @@ def fetch_market_data() -> dict:
             logger.exception("market_collection_failed ticker=%s", name)
             data[name] = _empty_metric()
 
+    # 1차(yfinance)에서 빠진 지표만 폴백 체인으로 개별 보충한다.
+    # 소스 단위가 아니라 지표 단위이므로, 성공한 지표는 그대로 유지된다.
+    for name, metric in data.items():
+        if metric.get("close") is not None:
+            continue
+        recovered = fetch_fallback(name)
+        if recovered:
+            data[name] = recovered
+
     ok = sum(1 for m in data.values() if m["close"] is not None)
-    logger.info("market_collection_finished ok=%s total=%s data=%s", ok, len(TICKERS), data)
+    sources = {n: m.get("source") for n, m in data.items()}
+    logger.info(
+        "market_collection_finished ok=%s total=%s sources=%s data=%s",
+        ok, len(TICKERS), sources, data,
+    )
     return data

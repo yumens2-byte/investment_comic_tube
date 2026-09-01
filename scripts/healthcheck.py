@@ -157,6 +157,26 @@ def check_code_constants(r: Report) -> None:
     except Exception as e:  # noqa: BLE001
         r.fail("validation_module", f"{type(e).__name__}: {e}")
 
+    # 폴백 체인 (1차 소스 장애 시 대체 경로가 살아있는지)
+    try:
+        from src.market_sources import FALLBACK_ORDER
+
+        no_fallback = [i for i in REQUIRED_VALIDATION_INDICATORS if not FALLBACK_ORDER.get(i)]
+        if no_fallback:
+            r.fail("fallback_chain", f"폴백 경로 없는 필수 지표: {no_fallback}")
+        else:
+            r.ok("fallback_chain", f"필수 {len(REQUIRED_VALIDATION_INDICATORS)}종 모두 폴백 보유")
+
+        # 폴백 소스 키가 하나도 없으면 이중화가 사실상 무력하다
+        keys = [k for k in ("FMP_API_KEY", "ALPHAVANTAGE_API_KEY", "FRED_API_KEY")
+                if os.environ.get(k)]
+        if not keys:
+            r.warn("fallback_keys", "폴백 API 키 미등록 -- 무인증 stooq 만 동작")
+        else:
+            r.ok("fallback_keys", f"등록된 폴백 소스 {len(keys)}종")
+    except Exception as e:  # noqa: BLE001
+        r.fail("fallback_module", f"{type(e).__name__}: {e}")
+
     # main 이 검증을 실제로 호출하는지 (모듈만 있고 배선 누락되는 경우 방지)
     main_src = Path("main.py")
     if main_src.exists():
