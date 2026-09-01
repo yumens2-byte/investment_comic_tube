@@ -163,12 +163,15 @@ def _render_segment(
     append: bool,
     zoom_in: bool = True,
 ) -> None:
-    """이미지 1장 + 자막 + (있으면) 내레이션으로 장면 하나를 렌더링한다."""
+    """이미지 1장 + (있으면) 내레이션으로 장면 하나를 렌더링한다.
+
+    자막(drawtext)은 사용하지 않는다. 한국어 폰트/개행 처리에서 깨짐이 발생했고,
+    내레이션 음성이 같은 내용을 전달하므로 화면에는 이미지만 남긴다.
+    caption 인자는 호출부 호환을 위해 남겨두되 렌더링에는 쓰지 않는다.
+    """
     video_filter = (
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"{_ken_burns_filter(duration, zoom_in)},"
-        f"drawtext=text='{_escape_drawtext(caption)}':fontcolor=white:fontsize=52:"
-        "box=1:boxcolor=black@0.55:boxborderw=22:x=(w-text_w)/2:y=h-th-200"
+        f"{_ken_burns_filter(duration, zoom_in)}"
     )
 
     cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", image_path]

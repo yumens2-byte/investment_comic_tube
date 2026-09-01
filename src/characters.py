@@ -11,13 +11,16 @@
 from __future__ import annotations
 
 # 히어로: 의인화 호랑이 (직립 이족보행, 수트 착용)
-HERO_NAME = "Tiger"
+HERO_NAME = "EDT"
 HERO_APPEARANCE = (
-    "The hero is an anthropomorphic tiger: a muscular bipedal tiger standing upright "
-    "on two legs, with orange fur and bold black stripes, white muzzle and chest, "
-    "fierce amber eyes. He wears a blue and orange high-tech combat suit with the "
-    "letters 'EDT' on the chest, armored gauntlets and boots. He is clearly a tiger, "
-    "not a human -- he has a tiger head, tiger ears, paws with claws, and a striped tail."
+    "The hero is called EDT. He is an anthropomorphic tiger: a muscular bipedal tiger "
+    "standing upright on two legs, with orange fur and bold black stripes, white muzzle "
+    "and chest, fierce amber eyes. He wears a blue and orange high-tech combat suit, "
+    "armored gauntlets and boots. He is clearly a tiger, not a human -- he has a tiger "
+    "head, tiger ears, paws with claws, and a striped tail. "
+    "His signature weapon is a large mechanical CHAINSAW: a heavy roaring chainsaw with "
+    "a long toothed bar, glowing orange energy along the chain, gripped in both paws. "
+    "The chainsaw must be clearly visible in his hands in every scene where he appears."
 )
 
 # 빌런: villain 키 -> 외형 정의

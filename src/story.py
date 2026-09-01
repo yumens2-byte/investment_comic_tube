@@ -36,7 +36,7 @@ BEAT_SCENES = [
         "THREAT",
         (
             "The villain appears in the distance above the city, menacing and huge, "
-            "the tiger hero is not visible yet."
+            "EDT the tiger hero is not visible yet."
         ),
     ),
     (
@@ -49,21 +49,21 @@ BEAT_SCENES = [
     (
         "HERO",
         (
-            "The tiger hero lands heroically in the foreground, crouched on rubble, "
-            "looking up at the villain, determined."
+            "EDT the tiger hero lands heroically in the foreground with his chainsaw raised, "
+            "crouched on rubble, looking up at the villain, determined."
         ),
     ),
     (
         "CLASH",
         (
-            "The tiger hero and the villain clash head-on in the center of the frame, "
+            "EDT the tiger hero swings his roaring chainsaw at the villain head-on in the center of the frame, "
             "energy bursting between them."
         ),
     ),
     (
         "LESSON",
         (
-            "The tiger hero stands alone on high ground at sunrise, calm, "
+            "EDT the tiger hero stands alone on high ground at sunrise, chainsaw resting at his side, calm, "
             "the city recovering behind him."
         ),
     ),
@@ -80,14 +80,14 @@ BEAT_IMAGE_SLOT = [0, 0, 0, 1, 2, 2]
 SLOT_SCENES = [
     (
         "The villain looms huge over a cracking financial city skyline, shockwave and "
-        "debris, storm clouds, the tiger hero is not visible."
+        "debris, storm clouds, EDT the tiger hero is not visible."
     ),
     (
-        "The tiger hero lands heroically in the foreground, crouched on rubble, "
-        "looking up at the villain, determined."
+        "EDT the tiger hero lands heroically in the foreground with his chainsaw raised, "
+        "crouched on rubble, looking up at the villain, determined."
     ),
     (
-        "The tiger hero and the villain clash head-on in the center of the frame, "
+        "EDT the tiger hero swings his roaring chainsaw at the villain head-on in the center of the frame, "
         "energy bursting between them, sunrise breaking through."
     ),
 ]
@@ -101,7 +101,7 @@ def _fallback_narrations(villain: str, theme: str, market_data: dict) -> list[st
         f"오늘 시장, 10년물 금리 {tnx}에 변동성 지수 {vix}.",
         f"그때 {villain}이 모습을 드러냈다.",
         "지수는 흔들리고, 투자자들의 계좌가 비명을 질렀다.",
-        "하지만 우리에겐 타이거가 있다.",
+        "하지만 우리에겐 EDT가 있다.",
         f"{theme}. 정면으로 부딪힌다.",
         "패닉은 짧고 원칙은 길다. 오늘도 살아남자.",
     ]
@@ -150,9 +150,9 @@ def _generate_narrations(villain: str, theme: str, market_data: dict) -> tuple[l
     prompt = (
         "너는 한국어 주식투자 숏폼 영상의 내레이션 작가다. "
         f"오늘 시장 데이터: 미국10년물금리 {tnx}, VIX {vix}, 나스닥 등락률 {nasdaq}%. "
-        f"빌런은 '{villain}', 주제는 '{theme}'. 히어로는 호랑이 캐릭터 '타이거'다.\n"
+        f"빌런은 '{villain}', 주제는 '{theme}'. 히어로는 체인소를 무기로 쓰는 호랑이 캐릭터 'EDT'다.\n"
         "아래 6개 장면 순서에 맞춰 각각 한 문장씩 한국어 내레이션을 써라.\n"
-        "1) 시장 상황 제시 2) 빌런 등장 3) 시장 타격 4) 타이거 등장 "
+        "1) 시장 상황 제시 2) 빌런 등장 3) 시장 타격 4) EDT 등장 "
         "5) 대결 6) 투자 교훈 마무리\n"
         "각 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
         "과장된 투자 권유나 수익 보장 표현은 절대 쓰지 마라.\n"
