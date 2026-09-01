@@ -2,7 +2,7 @@ name: EDT Market Shorts Production Pipeline
 
 on:
   schedule:
-    - cron: '0 23 * * 0,2,4' # 월·수·금 KST 오전 8시 (API 비용 절감 위해 주3회)
+    - cron: '0 0 * * *' # 매일 KST 오전 9시 (UTC 00:00)
   workflow_dispatch:
     inputs:
       mode:
