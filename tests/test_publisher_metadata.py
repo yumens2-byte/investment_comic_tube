@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 from googleapiclient.errors import HttpError
@@ -220,3 +221,54 @@ class ScopeTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class RefreshScopeRegressionTest(unittest.TestCase):
+    """2026-09-02 사고 회귀 방지.
+
+    확장된 SCOPES 를 갱신 요청에 실어 보내면, 아직 upload 스코프로만 발급된
+    토큰에서 invalid_scope 가 나 파이프라인 전체가 죽는다.
+    """
+
+    ENV: ClassVar[dict] = {
+        "YOUTUBE_CLIENT_ID": "cid",
+        "YOUTUBE_CLIENT_SECRET": "csec",
+        "YOUTUBE_REFRESH_TOKEN": "rtok",
+    }
+
+    @patch.dict("os.environ", ENV, clear=True)
+    @patch("src.publisher.build")
+    @patch("src.publisher.Credentials")
+    def test_scopes_not_passed_to_credentials(self, creds_cls, _build):
+        from src.publisher import get_youtube_service
+
+        get_youtube_service()
+
+        kwargs = creds_cls.call_args.kwargs
+        # scopes 를 넘기면 토큰이 가진 스코프와 불일치할 때 갱신이 거부된다
+        self.assertNotIn("scopes", kwargs)
+        self.assertEqual(kwargs["refresh_token"], "rtok")
+
+    @patch.dict("os.environ", ENV, clear=True)
+    @patch("src.publisher.build")
+    @patch("src.publisher.Credentials")
+    def test_refresh_error_message_includes_actual_reason(self, creds_cls, _build):
+        from google.auth.exceptions import RefreshError
+
+        from src.publisher import YouTubeAuthenticationError, get_youtube_service
+
+        creds_cls.return_value.refresh.side_effect = RefreshError("invalid_scope: Bad Request")
+
+        with self.assertLogs("src.publisher", level="ERROR") as captured, \
+             self.assertRaises(YouTubeAuthenticationError):
+            get_youtube_service()
+
+        # 사유를 invalid_grant 로 고정하면 원인을 오진한다
+        joined = "\n".join(captured.output)
+        self.assertIn("invalid_scope", joined)
+
+    @patch.dict("os.environ", {}, clear=True)
+    def test_missing_credentials_returns_none_without_raising(self):
+        from src.publisher import get_youtube_service
+
+        self.assertIsNone(get_youtube_service())
