@@ -11,9 +11,13 @@ from googleapiclient.http import MediaFileUpload
 
 logger = logging.getLogger(__name__)
 
-# 업로드만 하던 시절의 스코프로는 재생목록/썸네일을 다룰 수 없다.
-# playlistItems.insert 는 youtube 또는 youtube.force-ssl 을 요구한다.
-# 스코프를 넓히면 refresh token 을 재발급해야 한다(scripts/issue_youtube_token.py).
+# 토큰 발급 시 요청할 스코프. scripts/issue_youtube_token.py 가 사용한다.
+# playlistItems.insert 는 youtube.upload 로는 403 이 나므로 force-ssl 이 필요하다.
+#
+# 주의: 이 목록을 갱신(refresh) 요청에 그대로 넣으면 안 된다.
+# Google 은 요청 스코프가 발급 당시 스코프의 부분집합인지 검사하므로,
+# 아직 upload 스코프로만 발급된 토큰에 force-ssl 을 요구하면
+# invalid_scope 로 갱신 자체가 거부되어 파이프라인 전체가 죽는다(2026-09-02 사고).
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",
@@ -58,16 +62,19 @@ def get_youtube_service():
         logger.warning("youtube_credentials_missing upload_skipped=true")
         return None
 
+    # scopes 를 넘기지 않는다. 넘기면 갱신 요청에 그대로 실려 나가
+    # 토큰이 가지지 않은 스코프를 요구하게 되고 invalid_scope 로 실패한다.
+    # 생략하면 Google 이 토큰에 실제로 부여된 스코프를 그대로 돌려준다.
     credentials = Credentials(
         token=None, refresh_token=refresh_token, token_uri="https://oauth2.googleapis.com/token",
         client_id=client_id, client_secret=client_secret,
-        scopes=SCOPES,
     )
     try:
         credentials.refresh(Request())
     except RefreshError as exc:
+        # 사유를 고정 문자열로 찍으면 원인을 오진한다(invalid_scope 를 만료로 착각한 사례).
         logger.error(
-            "youtube_oauth_refresh_failed action=replace_YOUTUBE_REFRESH_TOKEN reason=invalid_grant"
+            "youtube_oauth_refresh_failed action=replace_YOUTUBE_REFRESH_TOKEN reason=%s", exc
         )
         raise YouTubeAuthenticationError(
             "YouTube refresh token is expired or revoked. Re-authorize the channel and "
