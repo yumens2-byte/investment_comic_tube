@@ -84,6 +84,41 @@ BEAT_SCENES = [
 
 BEAT_COUNT = len(BEAT_SCENES)
 
+# 마무리(6번 비트) 유형. 5일 운영 실측: 5회 중 4회가 '과연 EDT는 방어선을 지켜낼까요?' 변주였다.
+# 훅과 같은 방식으로 유형을 회전시켜 반복을 끊는다.
+ENDING_TYPES = ["QUESTION", "DECLARE", "TEASE", "TWIST"]
+ENDING_SPECS = {
+    "QUESTION": {
+        "name": "질문형",
+        "guide": "시청자에게 직접 던지는 한 가지 구체적 질문으로 끝낸다. '과연', '~까요' 같은 상투구는 쓰지 않는다.",
+        "example": "당신의 계좌는 지금 어느 편에 서 있나",
+    },
+    "DECLARE": {
+        "name": "선언형",
+        "guide": "EDT 의 결의나 상황 판단을 단정문으로 끝낸다. 물음표 금지.",
+        "example": "물러설 곳은 없다. 다음 방어선은 여기다.",
+    },
+    "TEASE": {
+        "name": "예고형",
+        "guide": "다음 회차에 벌어질 구체적 사건을 예고한다. 새로운 위협이나 인물의 등장을 암시한다.",
+        "example": "내일, 그림자 속에서 두 번째 빌런이 깨어난다.",
+    },
+    "TWIST": {
+        "name": "반전형",
+        "guide": "지금까지의 전제를 뒤집는 한 줄 폭로로 끝낸다.",
+        "example": "그런데 방어선을 뚫은 건 빌런이 아니었다.",
+    },
+}
+
+
+def select_ending_type(prev_state: dict | None) -> str:
+    """직전 회차와 다른 마무리 유형을 고른다."""
+    prev_ending = ((prev_state or {}).get("story_state") or {}).get("ending_type")
+    if prev_ending in ENDING_TYPES:
+        idx = ENDING_TYPES.index(prev_ending)
+        return ENDING_TYPES[(idx + 1) % len(ENDING_TYPES)]
+    return ENDING_TYPES[0]
+
 # 비용 통제: 이미지 N장을 6비트에 재사용하기 위한 슬롯 매핑.
 # 슬롯 0 = 훅 클로즈업, 슬롯 1 = 위협/시장(빌런), 슬롯 2 = 히어로 등장, 슬롯 3 = 대결/마무리.
 # 이미지 장수가 슬롯 수보다 적으면 renderer 가 남는 슬롯을 순환 대입한다.
@@ -200,7 +235,8 @@ def _build_continuity_context(prev_state: dict | None, market_data: dict, villai
 
 def _generate_narrations(
     villain: str, theme: str, market_data: dict, prev_state: dict | None = None,
-    hook_type: str = "A",
+    hook_type: str = "A", ending_type: str = "QUESTION",
+    recent_cliffhangers: list[str] | None = None,
 ) -> tuple[list[str], str | None]:
     """Gemini로 내레이션 6줄을 생성한다. 실패 시 (폴백 문장, 사유)."""
     fallback = _fallback_narrations(villain, theme, market_data, prev_state, hook_type)
@@ -222,6 +258,7 @@ def _generate_narrations(
     gold = market_data.get("GOLD", {}).get("close")
     continuity = _build_continuity_context(prev_state, market_data, villain)
     spec = HOOK_SPECS[hook_type]
+    ending = ENDING_SPECS[ending_type]
 
     prompt = (
         "너는 한국어 주식투자 숏폼 영상의 내레이션 작가다. "
@@ -237,8 +274,17 @@ def _generate_narrations(
         "아래 6개 장면 순서에 맞춰 각각 한 문장씩 한국어 내레이션을 써라.\n"
         "1) 오프닝 훅 2) 시장 상황과 빌런 등장 3) 시장 타격 4) EDT 등장 "
         "5) 대결 6) 마무리 겸 다음 회차 예고(클리프행어)\n"
-        "6번 문장은 반드시 여운이나 다음 편에 대한 궁금증을 남기는 형태로 끝내라.\n"
-        f"2~6번 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
+        f"[6번 문장 = 마무리] 유형: {ending['name']}. {ending['guide']} "
+        f"예시: \"{ending['example']}\"\n"
+        + (
+            "다음은 최근 회차의 마무리 문장들이다. 표현·구조·어휘가 이것들과 겹치면 안 된다:\n"
+            + "\n".join(f"  - {line}" for line in recent_cliffhangers)
+            + "\n"
+            if recent_cliffhangers
+            else ""
+        )
+        + "'과연', '~할 수 있을까요', '방어선을 지켜낼까요' 같은 상투구를 반복하지 마라.\n"
+        "2~6번 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
         "과장된 투자 권유나 수익 보장 표현은 절대 쓰지 마라.\n"
         '반드시 다음 JSON 배열 형식으로만 출력해라. 설명이나 마크다운 없이: '
         '["문장1","문장2","문장3","문장4","문장5","문장6"]'
@@ -286,7 +332,8 @@ def _generate_narrations(
 
 
 def build_story_state(
-    villain: str, prev_state: dict | None, narrations: list[str], hook_type: str = "A"
+    villain: str, prev_state: dict | None, narrations: list[str],
+    hook_type: str = "A", ending_type: str = "QUESTION",
 ) -> dict:
     """다음 회차가 이어받을 서사 상태를 만든다."""
     prev = prev_state or {}
@@ -301,6 +348,7 @@ def build_story_state(
         "villain_streak": streak,
         # 다음 회차가 같은 훅 유형을 연속으로 쓰지 않도록 기록한다
         "hook_type": hook_type,
+        "ending_type": ending_type,
         # 마지막 비트가 클리프행어이므로 다음 회차의 '미해결 위협' 입력이 된다
         "unresolved": narrations[-1] if narrations else None,
     }
@@ -321,13 +369,15 @@ def build_storyboard(
         streak = (prev_streak + 1) if isinstance(prev_streak, int) else 2
 
     hook_type = select_hook_type(villain, prev_state, streak)
+    ending_type = select_ending_type(prev_state)
+    recent_cliffhangers = list(prev.get("recent_cliffhangers") or [])
 
     logger.info(
-        "storyboard_started beats=%s prev_villain=%s hook_type=%s",
-        BEAT_COUNT, prev.get("villain"), hook_type,
+        "storyboard_started beats=%s prev_villain=%s hook_type=%s ending_type=%s avoid=%s",
+        BEAT_COUNT, prev.get("villain"), hook_type, ending_type, len(recent_cliffhangers),
     )
     narrations, degraded = _generate_narrations(
-        villain, theme, market_data, prev_state, hook_type
+        villain, theme, market_data, prev_state, hook_type, ending_type, recent_cliffhangers
     )
 
     storyboard = [
@@ -339,10 +389,10 @@ def build_storyboard(
     storyboard[0]["hook_type"] = hook_type
     storyboard[0]["tts_tone"] = HOOK_SPECS[hook_type]["tts_tone"]
     storyboard[0]["sfx"] = HOOK_SPECS[hook_type]["sfx"]
-    story_state = build_story_state(villain, prev_state, narrations, hook_type)
+    story_state = build_story_state(villain, prev_state, narrations, hook_type, ending_type)
     logger.info(
-        "storyboard_finished beats=%s streak=%s hook_type=%s hook='%s' degraded=%s",
-        len(storyboard), story_state["villain_streak"], hook_type,
+        "storyboard_finished beats=%s streak=%s hook_type=%s ending_type=%s hook='%s' degraded=%s",
+        len(storyboard), story_state["villain_streak"], hook_type, ending_type,
         storyboard[0]["narration"], degraded,
     )
     return storyboard, story_state, degraded

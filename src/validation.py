@@ -45,6 +45,10 @@ class RenderEnvironmentInvalid(ValidationError):
     pass
 
 
+class DuplicatePublish(ValidationError):
+    pass
+
+
 def _strict_mode() -> bool:
     """기본은 엄격 모드. STRICT_VALIDATION=false 로만 완화할 수 있다."""
     return os.getenv("STRICT_VALIDATION", "true").strip().lower() != "false"
@@ -154,3 +158,21 @@ def validate_render_environment() -> None:
         logger.error("render_env_validation_failed reason=%s", detail)
         raise RenderEnvironmentInvalid(detail)
     logger.warning("render_env_validation_bypassed reason=%s", detail)
+
+
+def validate_not_published_today() -> None:
+    """오늘 이미 발행됐으면 중단한다.
+
+    같은 날 재실행은 동일 시세를 받아 사실상 같은 이야기를 두 번 만든다.
+    STRICT_VALIDATION=false 면 경고만 남기고 진행한다(의도적 재발행용).
+    """
+    from src.drive_manager import has_published_today
+
+    if not has_published_today():
+        return
+
+    detail = "오늘 이미 발행된 회차가 있다 -- 같은 시세로 중복 발행 방지"
+    if _strict_mode():
+        logger.error("duplicate_publish_blocked reason=%s", detail)
+        raise DuplicatePublish(detail)
+    logger.warning("duplicate_publish_bypassed reason=%s", detail)

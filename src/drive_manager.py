@@ -27,6 +27,9 @@ DEFAULT_STATE = {
 }
 
 
+PUBLISHED_STATUSES = ["published", "published_degraded"]
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -36,9 +39,12 @@ def fetch_latest_episode_state() -> dict:
     logger.info("episode_state_fetch_started backend=supabase")
     try:
         client = get_client()
+        # 실패한 회차는 시청자가 본 적이 없으므로 번호도 서사도 이어받지 않는다.
+        # 발행된 회차만 기준으로 삼아야 번호 gap(YouTube 가 Ep.2 부터 시작)이 생기지 않는다.
         result = (
             client.table("episodes")
             .select("episode_no, status, villain, story_state, market_snapshot")
+            .in_("status", PUBLISHED_STATUSES)
             .order("episode_no", desc=True)
             .limit(1)
             .execute()
@@ -144,3 +150,62 @@ def record_step_finish(step_run_id: str | None, status: str, error_code: str | N
         ).eq("id", step_run_id).execute()
     except Exception as e:  # noqa: BLE001
         logger.warning("step_run_finish_failed id=%s reason=%s: %s", step_run_id, type(e).__name__, e)
+
+
+def has_published_today() -> bool:
+    """오늘(UTC) 이미 발행된 회차가 있는지 확인한다.
+
+    같은 날 재실행하면 동일 시세를 받아 사실상 같은 이야기가 두 번 생성된다
+    (Ep.1/Ep.2 가 31분 간격으로 완전히 같은 시장 데이터를 가진 사례).
+    조회 실패 시 False 를 돌려 파이프라인을 막지 않는다 -- 중복 방지는
+    보조 안전장치이지 발행의 전제조건은 아니다.
+    """
+    today = datetime.now(timezone.utc).date().isoformat()
+    try:
+        client = get_client()
+        result = (
+            client.table("episodes")
+            .select("episode_no, market_as_of")
+            .in_("status", PUBLISHED_STATUSES)
+            .gte("market_as_of", today)
+            .limit(1)
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("published_today_check_failed reason=%s: %s", type(e).__name__, e)
+        return False
+
+    rows = result.data or []
+    if rows:
+        logger.warning("already_published_today episode_no=%s", rows[0].get("episode_no"))
+        return True
+    return False
+
+
+def fetch_recent_cliffhangers(limit: int = 3) -> list[str]:
+    """최근 발행 회차의 마지막 문장(클리프행어)을 가져온다.
+
+    매회 '과연 EDT 는 방어선을 지켜낼까요?' 로 끝나는 반복을 끊기 위해
+    프롬프트에 '이것들과 다르게 써라' 로 주입한다.
+    """
+    try:
+        client = get_client()
+        result = (
+            client.table("episodes")
+            .select("story_state")
+            .in_("status", PUBLISHED_STATUSES)
+            .order("episode_no", desc=True)
+            .limit(limit)
+            .execute()
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("recent_cliffhangers_fetch_failed reason=%s: %s", type(e).__name__, e)
+        return []
+
+    lines = []
+    for row in result.data or []:
+        state = row.get("story_state") or {}
+        text = state.get("unresolved")
+        if text:
+            lines.append(str(text))
+    return lines

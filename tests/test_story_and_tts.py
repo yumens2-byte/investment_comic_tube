@@ -175,7 +175,8 @@ class QuotaFailFastTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             synthesize_narrations(["a", "b", "c"], output_dir=directory)
 
-        self.assertEqual(models.generate_content.call_count, 3)
+        # 일시적 오류는 비트당 1회 재시도하므로 3줄 x 2회 = 6회
+        self.assertEqual(models.generate_content.call_count, 6)
 
 
 class QuotaDetectionTest(unittest.TestCase):

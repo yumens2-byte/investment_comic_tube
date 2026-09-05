@@ -84,13 +84,43 @@ def _momentum_score(market_data: dict) -> float:
     return score
 
 
-def select_villain(market_data: dict) -> tuple[str, str, dict]:
-    """빌런, 테마, 축별 점수를 반환한다."""
+# 같은 빌런이 이 횟수 이상 연속되면 2순위 빌런으로 강제 전환한다.
+# 5일 운영 실측: Debt Titan 4/5 회 -- 시장 판정은 정확했지만 시리즈가 단조로워졌다.
+MAX_VILLAIN_STREAK = 3
+
+
+def select_villain(market_data: dict, prev_state: dict | None = None) -> tuple[str, str, dict]:
+    """빌런, 테마, 축별 점수를 반환한다.
+
+    점수 하한을 0 으로 둔다. 변동성 축은 VIX 20 을 중립으로 잡아 저변동성장에서
+    기본 -7~-13 점을 안고 시작했고, 그 결과 Chaos Reaper 가 구조적으로 절대
+    이길 수 없었다(5일간 전부 음수). 음수는 '이 축이 아니다' 이지 '벌점' 이 아니므로
+    0 으로 자르는 편이 세 축을 공정하게 비교한다.
+    """
     scores = {
-        VILLAIN_DEBT_TITAN: round(_rate_pressure_score(market_data), 2),
-        VILLAIN_CHAOS_REAPER: round(_volatility_score(market_data), 2),
-        VILLAIN_BULL_BRUTE: round(_momentum_score(market_data), 2),
+        VILLAIN_DEBT_TITAN: round(max(0.0, _rate_pressure_score(market_data)), 2),
+        VILLAIN_CHAOS_REAPER: round(max(0.0, _volatility_score(market_data)), 2),
+        VILLAIN_BULL_BRUTE: round(max(0.0, _momentum_score(market_data)), 2),
     }
-    villain = max(scores, key=lambda k: scores[k])
-    logger.info("villain_scored villain=%s scores=%s", villain, scores)
+    ranked = sorted(scores, key=lambda k: scores[k], reverse=True)
+    villain = ranked[0]
+    rotated_from = None
+
+    prev = prev_state or {}
+    prev_villain = prev.get("villain")
+    prev_streak = (prev.get("story_state") or {}).get("villain_streak")
+    if (
+        prev_villain == villain
+        and isinstance(prev_streak, int)
+        and prev_streak >= MAX_VILLAIN_STREAK
+        and len(ranked) > 1
+    ):
+        # 시장이 계속 같은 국면이어도 시리즈는 국면을 바꿔야 한다.
+        rotated_from = villain
+        villain = ranked[1]
+
+    logger.info(
+        "villain_scored villain=%s scores=%s rotated_from=%s",
+        villain, scores, rotated_from,
+    )
     return villain, THEMES[villain], scores

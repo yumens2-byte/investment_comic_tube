@@ -10,7 +10,7 @@ class FetchLatestEpisodeStateTest(unittest.TestCase):
         client = MagicMock()
         execute_result = MagicMock()
         execute_result.data = [{"episode_no": 105, "status": "published"}]
-        client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = (
+        client.table.return_value.select.return_value.in_.return_value.order.return_value.limit.return_value.execute.return_value = (
             execute_result
         )
         get_client.return_value = client
@@ -24,7 +24,7 @@ class FetchLatestEpisodeStateTest(unittest.TestCase):
         client = MagicMock()
         execute_result = MagicMock()
         execute_result.data = []
-        client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = (
+        client.table.return_value.select.return_value.in_.return_value.order.return_value.limit.return_value.execute.return_value = (
             execute_result
         )
         get_client.return_value = client
@@ -123,7 +123,7 @@ class EpisodeNumberingTest(unittest.TestCase):
         client = MagicMock()
         result = MagicMock()
         result.data = []
-        client.table.return_value.select.return_value.order.return_value.limit.return_value.execute.return_value = (
+        client.table.return_value.select.return_value.in_.return_value.order.return_value.limit.return_value.execute.return_value = (
             result
         )
         get_client.return_value = client

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 TTS_MODEL = "gemini-3.1-flash-tts-preview"
 TTS_VOICE = os.getenv("TTS_VOICE", "Charon")
+TTS_MAX_ATTEMPTS = 2  # 최초 1회 + 재시도 1회
 
 PCM_SAMPLE_RATE = 24000
 PCM_CHANNELS = 1
@@ -96,26 +97,43 @@ def synthesize_narrations(
             f"다음 대사를 {tone}으로 낭독해라. "
             f"낭독할 대사: {line}"
         )
-        try:
-            response = client.models.generate_content(
-                model=TTS_MODEL, contents=prompt, config=config
-            )
-            pcm = _extract_pcm(response)
-        except Exception as e:  # noqa: BLE001 - 외부 API 실패는 무음 장면으로 폴백
-            last_error = f"{type(e).__name__}"
-            logger.warning("tts_call_failed index=%s reason=%s: %s", idx, last_error, e)
-            paths.append(None)
-            if is_quota_exhausted(e):
-                last_error = "quota_exhausted"
-                remaining = len(narrations) - idx - 1
-                logger.warning("tts_aborted reason=quota_exhausted remaining=%s", remaining)
-                paths.extend([None] * remaining)
+        # 일시적 오류로 한 비트가 무음이 되면 영상 전체 품질이 떨어진다(Ep.4 사례).
+        # 한도 소진이 아닌 실패는 1회 재시도한다.
+        pcm = None
+        quota_hit = False
+        for attempt in range(TTS_MAX_ATTEMPTS):
+            try:
+                response = client.models.generate_content(
+                    model=TTS_MODEL, contents=prompt, config=config
+                )
+                pcm = _extract_pcm(response)
+            except Exception as e:  # noqa: BLE001 - 외부 API 실패는 무음 장면으로 폴백
+                last_error = f"{type(e).__name__}"
+                logger.warning(
+                    "tts_call_failed index=%s attempt=%s reason=%s: %s",
+                    idx, attempt + 1, last_error, e,
+                )
+                if is_quota_exhausted(e):
+                    quota_hit = True
+                    break
+                continue
+
+            if pcm:
+                if attempt > 0:
+                    logger.info("tts_retry_succeeded index=%s attempt=%s", idx, attempt + 1)
                 break
-            continue
+            last_error = "no_audio_in_response"
+            logger.warning("tts_empty index=%s attempt=%s", idx, attempt + 1)
+
+        if quota_hit:
+            last_error = "quota_exhausted"
+            paths.append(None)
+            remaining = len(narrations) - idx - 1
+            logger.warning("tts_aborted reason=quota_exhausted remaining=%s", remaining)
+            paths.extend([None] * remaining)
+            break
 
         if not pcm:
-            last_error = "no_audio_in_response"
-            logger.warning("tts_empty index=%s", idx)
             paths.append(None)
             continue
 

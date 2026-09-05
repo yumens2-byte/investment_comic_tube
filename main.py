@@ -12,6 +12,7 @@ from src.tts import synthesize_narrations
 from src.validation import (
     ValidationError,
     validate_market_data,
+    validate_not_published_today,
     validate_render_environment,
     validate_storyboard,
 )
@@ -68,10 +69,13 @@ def main() -> int:
     video_id = None
     final_status = "failed"
     degraded: list[str] = []
+    current_step = None
     try:
         # 렌더링 환경(한글 폰트) 먼저 확인한다. 두부 자막 영상이 발행되면
         # YouTube에 영구히 남으므로 유료 API를 쓰기 전에 중단하는 것이 싸다.
         validate_render_environment()
+        # 같은 날 두 번 돌면 같은 시세로 같은 이야기가 나간다 (Ep.1/Ep.2 사례)
+        validate_not_published_today()
 
         market_data = fetch_market_data()
 
@@ -89,7 +93,7 @@ def main() -> int:
         validate_storyboard(storyboard)
         narrations = [beat.get("narration", "") for beat in storyboard]
 
-        step = record_step_start(episode_id, "image")
+        step = current_step = record_step_start(episode_id, "image")
         # 비용 통제: 비트(6개)마다가 아니라 슬롯(기본 3개)만큼만 생성한다
         image_paths, image_degraded = generate_scene_images(
             script_data, scenes=SLOT_SCENES
@@ -101,8 +105,9 @@ def main() -> int:
             "success" if any(image_paths) else "skipped",
             error_code=image_degraded,
         )
+        current_step = None
 
-        step = record_step_start(episode_id, "tts")
+        step = current_step = record_step_start(episode_id, "tts")
         tones = [beat.get("tts_tone") for beat in storyboard]
         audio_paths, tts_degraded = synthesize_narrations(narrations, tones=tones)
         if tts_degraded:
@@ -112,14 +117,16 @@ def main() -> int:
             "success" if any(audio_paths) else "skipped",
             error_code=tts_degraded,
         )
+        current_step = None
 
-        step = record_step_start(episode_id, "render")
+        step = current_step = record_step_start(episode_id, "render")
         scenes = _build_scenes(storyboard, image_paths, audio_paths)
         video_file = render_video(script_data, scenes=scenes or None)
         update_episode(episode_id, status="rendered", video_path=video_file)
         record_step_finish(step, "success")
+        current_step = None
 
-        step = record_step_start(episode_id, "upload")
+        step = current_step = record_step_start(episode_id, "upload")
         video_id = upload_to_youtube(video_file, script_data)
         if video_id:
             final_status = "published_degraded" if degraded else "published"
@@ -132,18 +139,24 @@ def main() -> int:
             degraded_reason=";".join(degraded) if degraded else None,
         )
         record_step_finish(step, "success" if video_id else "skipped")
+        current_step = None
     except ValidationError as e:
         # 검증 실패는 버그가 아니라 '발행하지 않기로 한 정상 판단'이다.
         # traceback 대신 사유만 남기고, 부분 생성물이 있으면 실패로 기록한다.
         logger.error("pipeline_aborted_validation reason=%s", e)
+        if current_step:
+            record_step_finish(current_step, "failed", error_code=str(e)[:200])
         if episode_id:
             try:
                 update_episode(episode_id, status="aborted_validation", degraded_reason=str(e))
             except Exception:
                 logger.exception("episode_abort_record_failed")
         return 1
-    except Exception:
+    except Exception as e:
         logger.exception("pipeline_failed")
+        # 실패한 step 을 running 으로 방치하면 관측이 어긋난다 (Ep.1 upload 고아 사례)
+        if current_step:
+            record_step_finish(current_step, "failed", error_code=f"{type(e).__name__}"[:200])
         if episode_id:
             try:
                 update_episode(

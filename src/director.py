@@ -10,7 +10,11 @@ from __future__ import annotations
 import logging
 import os
 
-from src.drive_manager import fetch_latest_episode_state, start_episode
+from src.drive_manager import (
+    fetch_latest_episode_state,
+    fetch_recent_cliffhangers,
+    start_episode,
+)
 from src.market_regime import select_villain
 from src.quota import is_quota_exhausted
 from src.story import build_storyboard
@@ -59,10 +63,11 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
 def generate_connected_script(market_data: dict) -> dict:
     logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
+    prev_state["recent_cliffhangers"] = fetch_recent_cliffhangers(limit=3)
     next_ep = prev_state.get("episode", 0) + 1
 
     # 고정 임계값 대신 복합 스코어로 판정한다 (빌런 고착 방지)
-    villain, theme, scores = select_villain(market_data)
+    villain, theme, scores = select_villain(market_data, prev_state)
 
     base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
     narration, degraded_reason = _polish_narration(base_narration)
