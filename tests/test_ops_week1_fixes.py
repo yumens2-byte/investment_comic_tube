@@ -213,3 +213,60 @@ class StepFailureRecordingTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------- 5-보완) 실패 회차 회수 (UNIQUE 충돌 방지) ----------
+class FailedEpisodeReclaimTest(unittest.TestCase):
+    """2026-09-08 발견: 번호 재사용 + episode_no UNIQUE 제약 -> 무한 실패 루프."""
+
+    def _client_with_existing(self, rows):
+        c = MagicMock()
+        c.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(data=rows)
+        return c
+
+    def test_failed_row_with_same_number_is_deleted_before_insert(self):
+        client = self._client_with_existing([{"id": "ep-0008-old", "status": "failed"}])
+
+        drive_manager._reclaim_failed_episode(client, 8)
+
+        # step_runs 먼저, episodes 다음 순서로 삭제돼야 한다
+        deletes = [c for c in client.table.call_args_list]
+        names = [c.args[0] for c in deletes]
+        self.assertIn("step_runs", names)
+        self.assertIn("episodes", names)
+        client.table.return_value.delete.return_value.eq.assert_any_call("episode_id", "ep-0008-old")
+        client.table.return_value.delete.return_value.eq.assert_any_call("id", "ep-0008-old")
+
+    def test_aborted_validation_row_is_also_reclaimed(self):
+        client = self._client_with_existing([{"id": "ep-0008-old", "status": "aborted_validation"}])
+        drive_manager._reclaim_failed_episode(client, 8)
+        client.table.return_value.delete.return_value.eq.assert_any_call("id", "ep-0008-old")
+
+    def test_published_row_is_never_deleted(self):
+        client = self._client_with_existing([{"id": "ep-0008-pub", "status": "published"}])
+
+        with self.assertRaises(RuntimeError):
+            drive_manager._reclaim_failed_episode(client, 8)
+
+        client.table.return_value.delete.assert_not_called()
+
+    def test_no_existing_row_is_noop(self):
+        client = self._client_with_existing([])
+        drive_manager._reclaim_failed_episode(client, 8)
+        client.table.return_value.delete.assert_not_called()
+
+    @patch("src.drive_manager.get_client")
+    def test_start_episode_reclaims_before_insert(self, get_client):
+        client = MagicMock()
+        client.table.return_value.select.return_value.eq.return_value.execute.return_value = MagicMock(
+            data=[{"id": "ep-0008-old", "status": "failed"}]
+        )
+        get_client.return_value = client
+
+        new_id = drive_manager.start_episode({"episode": 8, "villain": "Debt Titan"})
+
+        self.assertTrue(new_id.startswith("ep-0008-"))
+        self.assertNotEqual(new_id, "ep-0008-old")
+        # 삭제가 INSERT 보다 먼저 호출됐는지
+        calls = [c[0] for c in client.table.return_value.method_calls]
+        self.assertLess(calls.index("delete"), calls.index("insert"))

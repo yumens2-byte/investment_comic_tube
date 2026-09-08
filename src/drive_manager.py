@@ -74,6 +74,38 @@ def fetch_latest_episode_state() -> dict:
     return state
 
 
+def _reclaim_failed_episode(client, episode_no: int) -> None:
+    """같은 번호로 남아 있는 실패 회차를 치운다.
+
+    번호 재사용(발행된 회차만 기준으로 다음 번호 산출)을 도입하면서
+    episode_no 의 UNIQUE 제약과 충돌하는 구멍이 생겼다: 실패한 Ep.8 이 남아 있는
+    상태에서 다음 실행이 다시 8 번을 INSERT 하면 UNIQUE 위반으로 죽고,
+    다음날도 같은 이유로 죽어 무한 실패에 빠진다 (2026-09-08 발견).
+
+    발행된 회차(published*)는 절대 건드리지 않는다. 실패/중단 상태만 정리한다.
+    """
+    existing = (
+        client.table("episodes")
+        .select("id, status")
+        .eq("episode_no", episode_no)
+        .execute()
+    )
+    for row in existing.data or []:
+        if row.get("status") in PUBLISHED_STATUSES:
+            # 발행된 번호와 충돌 -- 번호 산출 로직이 어긋난 것이므로 덮어쓰면 안 된다
+            raise RuntimeError(
+                f"episode_no={episode_no} 는 이미 발행된 회차다(id={row.get('id')}). "
+                "번호 산출 로직 확인 필요."
+            )
+        old_id = row.get("id")
+        client.table("step_runs").delete().eq("episode_id", old_id).execute()
+        client.table("episodes").delete().eq("id", old_id).execute()
+        logger.warning(
+            "failed_episode_reclaimed episode_no=%s old_id=%s old_status=%s",
+            episode_no, old_id, row.get("status"),
+        )
+
+
 def start_episode(script_data: dict) -> str:
     """신규 에피소드 row를 status=script_ready 로 선기록하고 id를 반환한다."""
     episode_no = script_data.get("episode")
@@ -82,6 +114,7 @@ def start_episode(script_data: dict) -> str:
 
     logger.info("episode_start_started episode_no=%s id=%s", episode_no, episode_id)
     client = get_client()
+    _reclaim_failed_episode(client, episode_no)
     client.table("episodes").insert(
         {
             "id": episode_id,
