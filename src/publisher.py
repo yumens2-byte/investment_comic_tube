@@ -36,17 +36,27 @@ MARKET_LABELS = [
     ("OIL", "WTI 유가", ""),
 ]
 
-BASE_HASHTAGS = [
-    "#Shorts", "#EDT", "#미국주식", "#미국증시", "#해외주식",
-    "#나스닥", "#SP500", "#주식투자", "#경제뉴스", "#재테크",
-    "#투자공부", "#시황", "#증시브리핑", "#stockmarket", "#investing",
-]
+# 모든 영상에 검색어를 나열하면 주제가 흐려진다. 고정 태그는 브랜드/포맷/분야만
+# 남기고, 실제 회차의 시장 데이터와 빌런에 맞는 태그를 아래에서 조합한다.
+BASE_HASHTAGS = ["#Shorts", "#EDTUniverse", "#미국증시", "#주식투자"]
 
 VILLAIN_HASHTAGS = {
-    "Debt Titan": ["#금리", "#긴축", "#국채금리"],
-    "Chaos Reaper": ["#변동성", "#폭락장", "#VIX"],
-    "Bull Brute": ["#상승장", "#랠리", "#돌파매매"],
+    "Debt Titan": ["#미국채금리", "#금리", "#긴축"],
+    "Chaos Reaper": ["#VIX", "#변동성", "#리스크관리"],
+    "Bull Brute": ["#상승장", "#증시랠리", "#시장모멘텀"],
 }
+
+MARKET_HASHTAGS = {
+    "SPX": ["#SP500"],
+    "NASDAQ": ["#나스닥"],
+    "TNX": ["#미국채금리"],
+    "VIX": ["#VIX"],
+    "DXY": ["#달러인덱스"],
+    "GOLD": ["#금값"],
+    "OIL": ["#국제유가"],
+}
+
+MAX_DESCRIPTION_HASHTAGS = 10
 
 
 class YouTubeAuthenticationError(RuntimeError):
@@ -122,9 +132,31 @@ def _format_story_block(storyboard: list | None) -> str:
     return "📖 이번 화 줄거리\n" + "\n".join(lines)
 
 
-def _build_hashtags(villain: str | None) -> list[str]:
+def _rank_market_keys(market_snapshot: dict | None) -> list[str]:
+    """등락 폭이 큰 지표부터 반환해 회차마다 메타데이터의 초점을 바꾼다."""
+    if not market_snapshot:
+        return []
+    ranked = []
+    for order, (key, _label, _unit) in enumerate(MARKET_LABELS):
+        metric = market_snapshot.get(key)
+        change = metric.get("change_pct") if isinstance(metric, dict) else None
+        if isinstance(change, (int, float)):
+            ranked.append((abs(change), -order, key))
+    return [key for _change, _order, key in sorted(ranked, reverse=True)]
+
+
+def _build_hashtags(
+    villain: str | None, market_snapshot: dict | None = None, theme: str | None = None,
+) -> list[str]:
+    """브랜드 태그와 당일 핵심 검색어만 조합한다(설명란 해시태그 도배 방지)."""
     tags = list(BASE_HASHTAGS)
     tags += VILLAIN_HASHTAGS.get(villain or "", [])
+    for key in _rank_market_keys(market_snapshot)[:3]:
+        tags += MARKET_HASHTAGS.get(key, [])
+    if theme:
+        normalized = "".join(ch for ch in str(theme) if ch.isalnum())
+        if 2 <= len(normalized) <= 18:
+            tags.append(f"#{normalized}")
     # 중복 제거하되 순서는 유지한다
     seen = set()
     unique = []
@@ -132,36 +164,92 @@ def _build_hashtags(villain: str | None) -> list[str]:
         if tag not in seen:
             seen.add(tag)
             unique.append(tag)
-    return unique
+    return unique[:MAX_DESCRIPTION_HASHTAGS]
+
+
+def _primary_signal(metadata: dict) -> str:
+    """제목과 소셜 본문에서 쓸 가장 큰 당일 시장 변화를 한 줄로 만든다."""
+    snapshot = metadata.get("market_snapshot") or {}
+    ranked = _rank_market_keys(snapshot)
+    if not ranked:
+        return str(metadata.get("theme") or "오늘의 미국 증시")
+    key = ranked[0]
+    metric = snapshot[key]
+    label = next(label for item, label, _unit in MARKET_LABELS if item == key)
+    change = metric.get("change_pct")
+    sign = "+" if change > 0 else ""
+    return f"{label} {sign}{change:.2f}%"
+
+
+def build_title(metadata: dict) -> str:
+    """회차의 실제 핵심 지표를 앞에 둔 검색/클릭 친화적 YouTube 제목."""
+    signal = _primary_signal(metadata)
+    theme = str(metadata.get("theme") or "시장 브리핑").strip()
+    episode = metadata.get("episode", "-")
+    return f"{signal}, {theme} | EDT 투자코믹 Ep.{episode} #Shorts"[:100]
+
+
+def build_social_post(metadata: dict, max_length: int = 280) -> str:
+    """X 등 짧은 본문용 카피. 줄거리 복사 대신 훅·근거·CTA를 압축한다."""
+    storyboard = metadata.get("storyboard") or []
+    hook = next(
+        (str(beat.get("narration", "")).strip() for beat in storyboard
+         if str(beat.get("narration", "")).strip()),
+        str(metadata.get("theme") or "오늘 시장의 흐름을 확인하세요."),
+    )
+    tags = _build_hashtags(
+        metadata.get("villain"), metadata.get("market_snapshot"), metadata.get("theme")
+    )
+    # X에서는 발견성보다 가독성을 우선해 핵심 태그 3개만 쓴다.
+    suffix = " ".join(tags[:3])
+    body = f"{hook}\n\n핵심 신호: {_primary_signal(metadata)}\n30초 투자 코믹으로 확인하세요.\n\n{suffix}"
+    if len(body) <= max_length:
+        return body
+    budget = max(1, max_length - len(body) + len(hook) - 1)
+    return body.replace(hook, hook[:budget].rstrip() + "…", 1)[:max_length]
 
 
 def build_description(metadata: dict) -> str:
-    """기존 설명을 유지하면서 시장 데이터·줄거리·해시태그를 덧붙인다."""
+    """첫 화면 요약, 근거 데이터, 교훈 순으로 읽히는 설명을 만든다."""
     episode = metadata.get("episode")
     theme = metadata.get("theme")
     villain = metadata.get("villain")
 
-    # 기존 형식 유지 (회차 / 테마)
-    blocks = [f"EDT Universe Episode {episode}\nTheme: {theme}"]
+    storyboard = metadata.get("storyboard") or []
+    narrations = [
+        str(beat.get("narration", "")).strip() for beat in storyboard
+        if str(beat.get("narration", "")).strip()
+    ]
+    hook = narrations[0] if narrations else f"오늘의 주제: {theme}"
+    takeaway = narrations[-1] if len(narrations) > 1 else "시장보다 먼저 원칙을 점검하세요."
+    blocks = [
+        f"{hook}\n\n오늘의 핵심 신호는 {_primary_signal(metadata)}입니다. "
+        "EDT와 함께 30초 안에 시장의 위험과 대응 원칙을 확인하세요.",
+    ]
 
     market = _format_market_block(metadata.get("market_snapshot"))
     if market:
         blocks.append(market)
 
-    story = _format_story_block(metadata.get("storyboard"))
-    if story:
-        blocks.append(story)
+    blocks.append(f"🎯 오늘의 한 줄\n{takeaway}")
 
-    blocks.append(" ".join(_build_hashtags(villain)))
+    blocks.append(
+        f"🐯 EDT Universe Ep.{episode} · {theme}\n"
+        "본 콘텐츠는 정보 제공 및 교육 목적이며, 특정 종목의 매수·매도를 권유하지 않습니다."
+    )
+
+    blocks.append(" ".join(_build_hashtags(villain, metadata.get("market_snapshot"), theme)))
 
     description = "\n\n".join(blocks)
     # YouTube 설명란 상한은 5000자다
     return description[:4900]
 
 
-def _tag_list(villain: str | None) -> list[str]:
+def _tag_list(
+    villain: str | None, market_snapshot: dict | None = None, theme: str | None = None,
+) -> list[str]:
     """YouTube tags 필드용(해시 기호 없이). 총 500자 제한이 있다."""
-    tags = ["EDT", "Shorts", "미국증시", "미국주식", "나스닥", "주식투자", "시황"]
+    tags = [tag.removeprefix("#") for tag in _build_hashtags(villain, market_snapshot, theme)]
     if villain:
         tags.append(villain)
     return tags
@@ -286,7 +374,7 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
 
 
 def upload_to_youtube(video_path, metadata):
-    title = f"[EDT Universe] Ep.{metadata.get('episode')} {metadata.get('villain')}의 공습! #Shorts"[:95]
+    title = build_title(metadata)
     logger.info("youtube_upload_preparing title=%r", title)
     
     if not os.path.exists(video_path):
@@ -300,7 +388,9 @@ def upload_to_youtube(video_path, metadata):
         "snippet": {
             "title": title,
             "description": build_description(metadata),
-            "tags": _tag_list(metadata.get("villain")),
+            "tags": _tag_list(
+                metadata.get("villain"), metadata.get("market_snapshot"), metadata.get("theme")
+            ),
             "categoryId": "27"
         },
         "status": {
