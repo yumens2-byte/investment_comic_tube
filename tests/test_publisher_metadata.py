@@ -17,6 +17,8 @@ from src.publisher import (
     _tag_list,
     add_to_playlist,
     build_description,
+    build_social_post,
+    build_title,
     set_thumbnail,
 )
 
@@ -86,21 +88,28 @@ class HashtagTest(unittest.TestCase):
     def test_unknown_villain_still_returns_base(self):
         self.assertTrue(_build_hashtags("Nobody"))
 
+    def test_market_tags_follow_largest_moves_without_spam(self):
+        tags = _build_hashtags("Debt Titan", SNAPSHOT, "긴축 경계")
+        self.assertIn("#VIX", tags)
+        self.assertIn("#미국채금리", tags)
+        self.assertIn("#긴축경계", tags)
+        self.assertLessEqual(len(tags), 10)
+
     def test_tag_list_has_no_hash_symbols(self):
         for tag in _tag_list("Debt Titan"):
             self.assertFalse(tag.startswith("#"))
 
 
 class DescriptionTest(unittest.TestCase):
-    def test_keeps_original_header(self):
+    def test_includes_episode_and_theme(self):
         d = build_description(META)
-        self.assertIn("EDT Universe Episode 1", d)
-        self.assertIn("Theme: 긴축", d)
+        self.assertIn("EDT Universe Ep.1 · 긴축", d)
 
     def test_contains_all_sections(self):
         d = build_description(META)
         self.assertIn("오늘의 미국 시장", d)
-        self.assertIn("이번 화 줄거리", d)
+        self.assertIn("오늘의 한 줄", d)
+        self.assertIn("정보 제공 및 교육 목적", d)
         self.assertIn("#Shorts", d)
 
     def test_within_youtube_limit(self):
@@ -109,8 +118,27 @@ class DescriptionTest(unittest.TestCase):
 
     def test_works_without_market_or_story(self):
         d = build_description({"episode": 1, "theme": "t", "villain": "Debt Titan"})
-        self.assertIn("EDT Universe Episode 1", d)
+        self.assertIn("EDT Universe Ep.1 · t", d)
         self.assertIn("#Shorts", d)
+
+
+class PublishingCopyTest(unittest.TestCase):
+    def test_title_leads_with_strongest_market_signal(self):
+        title = build_title(META)
+        self.assertTrue(title.startswith("공포지수 VIX +3.40%"))
+        self.assertIn("긴축", title)
+        self.assertLessEqual(len(title), 100)
+
+    def test_social_post_is_concise_and_uses_only_three_hashtags(self):
+        post = build_social_post(META)
+        self.assertIn("문장0", post)
+        self.assertIn("핵심 신호: 공포지수 VIX +3.40%", post)
+        self.assertLessEqual(len(post), 280)
+        self.assertEqual(post.count("#"), 3)
+
+    def test_social_post_respects_custom_length(self):
+        metadata = dict(META, storyboard=[{"narration": "긴 문장" * 100}])
+        self.assertLessEqual(len(build_social_post(metadata, max_length=120)), 120)
 
 
 class ThumbnailTest(unittest.TestCase):
