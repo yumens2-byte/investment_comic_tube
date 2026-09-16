@@ -43,8 +43,17 @@ class PublisherTest(unittest.TestCase):
     @patch("src.publisher.Credentials.refresh")
     def test_expired_token_has_actionable_error(self, refresh):
         refresh.side_effect = RefreshError("invalid_grant: Token has been expired or revoked")
-        with self.assertRaisesRegex(YouTubeAuthenticationError, "Re-authorize"):
+        with self.assertLogs("src.publisher", level="ERROR") as captured, \
+             self.assertRaisesRegex(
+                 YouTubeAuthenticationError,
+                 "cannot be reissued non-interactively.*Re-authorize",
+             ):
             get_youtube_service()
+
+        self.assertIn(
+            "action=interactive_reauthorization_required",
+            "\n".join(captured.output),
+        )
 
 
 class RendererLoggingTest(unittest.TestCase):

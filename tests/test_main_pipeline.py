@@ -4,6 +4,7 @@ import unittest
 from unittest.mock import patch
 
 import main
+from src.publisher import YouTubeAuthenticationError
 
 STORYBOARD = [
     {"beat": "HOOK", "scene": "s1", "narration": "n1"},
@@ -69,6 +70,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
             logging.getLogger().removeHandler(handler)
 
     @patch("main.record_step_finish")
+    @patch("main.get_youtube_service", return_value="youtube-service")
     @patch("main.record_step_start", return_value="step-run-1")
     @patch("main.update_episode")
     @patch("main.upload_to_youtube", return_value="yt-video-123")
@@ -78,7 +80,8 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
     def test_fully_successful_run_marks_published(
-        self, _fetch, _script, images, tts, render, _upload, update_episode, _start, _finish
+        self, _fetch, _script, images, tts, render, upload, update_episode, _start,
+        youtube_auth, _finish
     ):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
             exit_code = main.main()
@@ -90,6 +93,8 @@ class PipelineOrchestrationTest(unittest.TestCase):
         self.assertEqual(len(SLOT_SCENES), 4)
         # 내레이션 6줄이 전부 TTS로 전달됐는지
         self.assertEqual(tts.call_args.args[0], [f"n{i}" for i in range(1, 7)])
+        youtube_auth.assert_called_once_with()
+        self.assertEqual(upload.call_args.kwargs["youtube_service"], "youtube-service")
         # 이미지 3장으로 6장면이 렌더링되는지
         scenes = render.call_args.kwargs["scenes"]
         self.assertEqual(len(scenes), 6)
@@ -98,6 +103,33 @@ class PipelineOrchestrationTest(unittest.TestCase):
         final = update_episode.call_args_list[-1]
         self.assertEqual(final.kwargs["status"], "published")
         self.assertIsNone(final.kwargs["degraded_reason"])
+
+    @patch("main.upload_to_youtube")
+    @patch("main.render_video")
+    @patch("main.synthesize_narrations")
+    @patch("main.generate_scene_images")
+    @patch("main.generate_connected_script")
+    @patch("main.fetch_market_data")
+    @patch(
+        "main.get_youtube_service",
+        side_effect=YouTubeAuthenticationError("refresh token revoked"),
+    )
+    def test_revoked_youtube_token_aborts_before_market_and_paid_generation(
+        self, youtube_auth, fetch, script, images, tts, render, upload
+    ):
+        with tempfile.TemporaryDirectory() as directory, patch.dict(
+            "os.environ", {"LOG_DIR": directory}
+        ):
+            exit_code = main.main()
+
+        self.assertEqual(exit_code, 1)
+        youtube_auth.assert_called_once_with()
+        fetch.assert_not_called()
+        script.assert_not_called()
+        images.assert_not_called()
+        tts.assert_not_called()
+        render.assert_not_called()
+        upload.assert_not_called()
 
     @patch("main.record_step_finish")
     @patch("main.record_step_start", return_value="step-run-1")

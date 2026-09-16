@@ -106,6 +106,43 @@ Supabase 실행은 `episode_id` 충돌 시 같은 행을 갱신하므로 네트�
 만료·취소된 인증 오류입니다. Google OAuth 동의 절차로 채널을 다시 인증하고 repository의
 `YOUTUBE_REFRESH_TOKEN` Actions secret을 새 값으로 교체한 뒤 workflow를 재실행해야 합니다.
 로그에는 token 값이 기록되지 않습니다. 업로드 기본 공개 범위는 안전을 위해 `private`입니다.
+파이프라인은 시세 수집과 유료 이미지/TTS 생성 전에 refresh token을 검증하므로, 잘못된 토큰이면
+콘텐츠 생성 비용을 쓰지 않고 즉시 종료합니다.
+
+### 토큰 자동 갱신 범위
+
+- **Access token 만료는 이미 자동 처리됩니다.** 파이프라인은 저장된 refresh token으로 짧은 수명의
+  access token을 매 실행마다 새로 받아 사용하므로 운영자가 access token을 저장하거나 갱신할 필요가
+  없습니다.
+- **Refresh token이 유효한 동안에는 무인 실행이 가능합니다.** 일반적인 access token 만료는
+  장애가 아니며 `credentials.refresh()`가 자동으로 복구합니다.
+- **프로덕션 상태의 refresh token에 무조건 적용되는 고정 만료 기간은 없습니다.** 다만 사용자가
+  앱 권한을 철회하거나, 6개월간 사용하지 않거나, 비밀번호 변경이 특정 Gmail scope에 영향을
+  주거나, 계정별 발급 한도를 초과하는 등의 조건에서는 토큰이 무효화될 수 있습니다. 따라서
+  “영구 보장”되는 토큰은 아닙니다.
+- **`invalid_grant`가 반환된 refresh token은 자동 재발급할 수 없습니다.** 토큰 취소, Google 계정의
+  앱 권한 철회, OAuth 클라이언트 변경, 장기간 미사용 또는 테스트 상태 동의 화면의 만료 등은 다시
+  사용자 동의를 받아야 합니다. 이미 취소된 credential만 가진 GitHub Actions가 사용자 동의를
+  대신하거나 새 refresh token을 발급받는 우회 코드를 두는 것은 불가능합니다.
+- Threads의 장기 토큰 갱신 API처럼 기존 장기 토큰 자체를 연장하는 방식과 달리, Google OAuth의
+  `invalid_grant`는 기존 권한이 더 이상 유효하지 않다는 뜻입니다. 따라서 두 플랫폼에 같은 자동
+  재발급 방식을 적용할 수 없습니다.
+
+재인증은 운영자 PC에서 다음 명령으로 수행합니다. OAuth 동의 화면이 외부 사용자용 **Testing**
+상태이면 YouTube scope로 발급한 refresh token은 일반적으로 7일 후 만료되므로, 발급 전에
+**Production** 상태로 전환해야 합니다.
+
+```bash
+python scripts/issue_youtube_token.py \
+  --client-id "$YOUTUBE_CLIENT_ID" \
+  --client-secret "$YOUTUBE_CLIENT_SECRET"
+```
+
+브라우저에서 업로드 대상 채널을 승인한 다음 출력된 값을 GitHub Actions secret
+`YOUTUBE_REFRESH_TOKEN`에 덮어쓰고 workflow를 재실행합니다. 토큰 값은 이슈, 로그 또는 저장소에
+붙여 넣지 마세요. 자세한 만료 조건은 [Google OAuth 2.0 문서](https://developers.google.com/identity/protocols/oauth2#expiration),
+오프라인 접근 방식은 [Google 웹 서버 OAuth 문서](https://developers.google.com/identity/protocols/oauth2/web-server#offline)를
+참고하십시오.
 
 ## 스토리 → 영상 우선 파일럿
 

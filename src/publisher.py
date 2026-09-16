@@ -58,6 +58,11 @@ MARKET_HASHTAGS = {
 
 MAX_DESCRIPTION_HASHTAGS = 10
 
+# ``None`` means that credentials are intentionally unavailable and upload should
+# be skipped.  A separate sentinel lets the pipeline pass a service created by
+# its startup preflight without making upload_to_youtube refresh the token again.
+_YOUTUBE_SERVICE_UNSET = object()
+
 
 class YouTubeAuthenticationError(RuntimeError):
     """Raised when YouTube OAuth credentials need operator action."""
@@ -82,13 +87,28 @@ def get_youtube_service():
     try:
         credentials.refresh(Request())
     except RefreshError as exc:
-        # 사유를 고정 문자열로 찍으면 원인을 오진한다(invalid_scope 를 만료로 착각한 사례).
+        # invalid_grant만 재동의 대상이다. invalid_scope, 일시적 네트워크 오류 등을
+        # 모두 "토큰 만료"로 안내하면 정상 토큰을 불필요하게 폐기하게 된다.
+        reason = str(exc)
+        if "invalid_grant" in reason.lower():
+            logger.error(
+                "youtube_oauth_refresh_failed action=interactive_reauthorization_required "
+                "replace_secret=YOUTUBE_REFRESH_TOKEN reason=%s",
+                exc,
+            )
+            raise YouTubeAuthenticationError(
+                "YouTube refresh token is expired or revoked and cannot be reissued "
+                "non-interactively. Re-authorize the channel and replace the "
+                "YOUTUBE_REFRESH_TOKEN GitHub Actions secret."
+            ) from exc
+
         logger.error(
-            "youtube_oauth_refresh_failed action=replace_YOUTUBE_REFRESH_TOKEN reason=%s", exc
+            "youtube_oauth_refresh_failed action=inspect_oauth_configuration reason=%s",
+            exc,
         )
         raise YouTubeAuthenticationError(
-            "YouTube refresh token is expired or revoked. Re-authorize the channel and "
-            "replace the YOUTUBE_REFRESH_TOKEN GitHub Actions secret."
+            f"YouTube OAuth refresh failed ({reason}). Inspect the OAuth client, scopes, "
+            "network, and Google service status before replacing the refresh token."
         ) from exc
     return build("youtube", "v3", credentials=credentials)
 
@@ -373,14 +393,18 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
     return playlist_id
 
 
-def upload_to_youtube(video_path, metadata):
+def upload_to_youtube(video_path, metadata, *, youtube_service=_YOUTUBE_SERVICE_UNSET):
     title = build_title(metadata)
     logger.info("youtube_upload_preparing title=%r", title)
     
     if not os.path.exists(video_path):
         raise FileNotFoundError(f"Video file does not exist: {video_path}")
 
-    youtube = get_youtube_service()
+    youtube = (
+        get_youtube_service()
+        if youtube_service is _YOUTUBE_SERVICE_UNSET
+        else youtube_service
+    )
     if not youtube:
         return None
 

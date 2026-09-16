@@ -36,7 +36,7 @@ import argparse
 import os
 import sys
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 
 # 업로드 외에 재생목록 추가/썸네일 설정까지 하려면 스코프를 넓혀야 한다.
 # playlistItems.insert 는 youtube.upload 로는 403 이 난다.
@@ -82,6 +82,11 @@ def verify_channel(creds) -> None:
 
 def main() -> int:
     print(f"[issue_youtube_token] v{VERSION} 시작")
+    print(
+        "IMPORTANT: Google OAuth 동의 화면이 Testing이면 YouTube refresh token이 "
+        "7일 후 만료될 수 있습니다. 발급 전에 Publishing status를 Production으로 "
+        "전환했는지 확인하세요."
+    )
 
     parser = argparse.ArgumentParser(description="YouTube OAuth refresh token (재)발급 (로컬 1회)")
     parser.add_argument("--client-id", default=os.environ.get("YOUTUBE_CLIENT_ID", ""))
