@@ -294,6 +294,8 @@ class RefreshScopeRegressionTest(unittest.TestCase):
         # 사유를 invalid_grant 로 고정하면 원인을 오진한다
         joined = "\n".join(captured.output)
         self.assertIn("invalid_scope", joined)
+        self.assertIn("action=inspect_oauth_configuration", joined)
+        self.assertNotIn("interactive_reauthorization_required", joined)
 
     @patch.dict("os.environ", {}, clear=True)
     def test_missing_credentials_returns_none_without_raising(self):

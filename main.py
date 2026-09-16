@@ -5,7 +5,7 @@ from src.director import generate_connected_script
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
 from src.logging_config import configure_logging
-from src.publisher import upload_to_youtube
+from src.publisher import get_youtube_service, upload_to_youtube
 from src.renderer import render_video
 from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
@@ -77,6 +77,11 @@ def main() -> int:
         # 같은 날 두 번 돌면 같은 시세로 같은 이야기가 나간다 (Ep.1/Ep.2 사례)
         validate_not_published_today()
 
+        # OAuth 토큰은 이미지/TTS 생성과 렌더링 전에 갱신해 본다. 만료되거나
+        # 취소된 토큰으로 수 분간 유료 작업을 수행한 뒤 업로드에서 실패하는 일을
+        # 막고, 여기서 만든 service를 실제 업로드에도 재사용한다.
+        youtube_service = get_youtube_service()
+
         market_data = fetch_market_data()
 
         # 필수 지표가 없으면 여기서 중단한다. start_episode() 이전이므로
@@ -127,7 +132,9 @@ def main() -> int:
         current_step = None
 
         step = current_step = record_step_start(episode_id, "upload")
-        video_id = upload_to_youtube(video_file, script_data)
+        video_id = upload_to_youtube(
+            video_file, script_data, youtube_service=youtube_service
+        )
         if video_id:
             final_status = "published_degraded" if degraded else "published"
         else:
