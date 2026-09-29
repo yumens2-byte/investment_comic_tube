@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import weakref
 from datetime import date
 from unittest.mock import patch
 
@@ -42,6 +43,28 @@ class GocEventTest(unittest.TestCase):
         prompt = client.return_value.models.generate_content.call_args.kwargs["contents"]
         self.assertIn("자본 보호", prompt)
         self.assertIn("16", prompt)
+
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test"})
+    @patch("google.genai.Client")
+    def test_goc_client_remains_alive_during_request(self, create_client):
+        class Models:
+            def __init__(self, owner):
+                self.owner_ref = weakref.ref(owner)
+
+            def generate_content(self, **kwargs):
+                if self.owner_ref() is None:
+                    raise RuntimeError("Cannot send a request, as the client has been closed.")
+                return type("Response", (), {"text": '["하나","둘","셋","넷","다섯","여섯"]'})()
+
+        class Client:
+            @property
+            def models(self):
+                return Models(self)
+
+        create_client.side_effect = lambda **kwargs: Client()
+        event = {"episode_no": 29, "market_as_of": "2026-09-29T04:03:43+00:00",
+                 "villain": "Bull Brute", "market_snapshot": {"VIX": {"close": 16}}}
+        self.assertEqual(len(build_goc_script(event)["storyboard"]), 6)
 
     def test_goc_image_prompt_has_no_edt_character_description(self):
         prompt = _build_prompt({"track": "GOC", "villain": "Bull Brute"}, "protect capital", True)
