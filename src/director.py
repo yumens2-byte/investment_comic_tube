@@ -60,7 +60,7 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
     return polished, None
 
 
-def generate_connected_script(market_data: dict) -> dict:
+def generate_connected_script(market_data: dict, *, persist: bool = True) -> dict:
     logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
     prev_state["recent_cliffhangers"] = fetch_recent_cliffhangers(limit=3)
@@ -97,6 +97,6 @@ def generate_connected_script(market_data: dict) -> dict:
         next_ep, villain, theme, story_state["villain_streak"],
     )
 
-    episode_id = start_episode(script_data)
-    script_data["episode_id"] = episode_id
+    if persist:
+        script_data["episode_id"] = start_episode(script_data)
     return script_data

@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from src.collector import fetch_market_data
 from src.content_quality import VERSION as QUALITY_VERSION, validate_media_package, validate_rendered_video
@@ -62,9 +63,9 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
     return scenes
 
 
-def main() -> int:
+def main(*, video_pilot: bool = False) -> int:
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s quality_gate=%s", log_path, QUALITY_VERSION)
+    logger.info("pipeline_started log_file=%s quality_gate=%s video_pilot=%s", log_path, QUALITY_VERSION, video_pilot)
 
     episode_id = None
     video_id = None
@@ -76,12 +77,13 @@ def main() -> int:
         # YouTube에 영구히 남으므로 유료 API를 쓰기 전에 중단하는 것이 싸다.
         validate_render_environment()
         # 같은 날 두 번 돌면 같은 시세로 같은 이야기가 나간다 (Ep.1/Ep.2 사례)
-        validate_not_published_today()
+        if not video_pilot:
+            validate_not_published_today()
 
         # OAuth 토큰은 이미지/TTS 생성과 렌더링 전에 갱신해 본다. 만료되거나
         # 취소된 토큰으로 수 분간 유료 작업을 수행한 뒤 업로드에서 실패하는 일을
         # 막고, 여기서 만든 service를 실제 업로드에도 재사용한다.
-        youtube_service = get_youtube_service()
+        youtube_service = None if video_pilot else get_youtube_service()
 
         market_data = fetch_market_data()
 
@@ -90,7 +92,8 @@ def main() -> int:
         validate_market_data(market_data)
 
         # script 생성 시 episode row가 status=script_ready 로 선기록된다
-        script_data = generate_connected_script(market_data)
+        script_data = (generate_connected_script(market_data, persist=False) if video_pilot
+                       else generate_connected_script(market_data))
         episode_id = script_data.get("episode_id")
         if script_data.get("degraded_reason"):
             degraded.append(script_data["degraded_reason"])
@@ -99,43 +102,51 @@ def main() -> int:
         validate_storyboard(storyboard)
         narrations = [beat.get("narration", "") for beat in storyboard]
 
-        step = current_step = record_step_start(episode_id, "image")
+        step = current_step = record_step_start(episode_id, "image") if not video_pilot else None
         # 비용 통제: 비트(6개)마다가 아니라 슬롯(기본 3개)만큼만 생성한다
         image_paths, image_degraded = generate_scene_images(
             script_data, scenes=SLOT_SCENES
         )
         if image_degraded:
             degraded.append(image_degraded)
-        record_step_finish(
-            step,
-            "success" if any(image_paths) else "skipped",
-            error_code=image_degraded,
-        )
+        if not video_pilot:
+            record_step_finish(
+                step,
+                "success" if any(image_paths) else "skipped",
+                error_code=image_degraded,
+            )
         current_step = None
 
-        step = current_step = record_step_start(episode_id, "tts")
+        step = current_step = record_step_start(episode_id, "tts") if not video_pilot else None
         tones = [beat.get("tts_tone") for beat in storyboard]
         audio_paths, tts_degraded = synthesize_narrations(narrations, tones=tones)
         if tts_degraded:
             degraded.append(tts_degraded)
-        record_step_finish(
-            step,
-            "success" if any(audio_paths) else "skipped",
-            error_code=tts_degraded,
-        )
+        if not video_pilot:
+            record_step_finish(
+                step,
+                "success" if any(audio_paths) else "skipped",
+                error_code=tts_degraded,
+            )
         current_step = None
 
         # 품질 저하를 기록만 하고 게시하면 텍스트 카드/무음 회차가 공개될 수 있다.
         # 필수 미디어가 빠졌으면 렌더링 및 업로드를 진행하지 않는다.
         validate_media_package(image_paths, audio_paths)
 
-        step = current_step = record_step_start(episode_id, "render")
+        step = current_step = record_step_start(episode_id, "render") if not video_pilot else None
         scenes = _build_scenes(storyboard, image_paths, audio_paths)
         video_file = render_video(script_data, scenes=scenes, require_storyboard=True)
         validate_rendered_video(video_file)
-        update_episode(episode_id, status="rendered", video_path=video_file)
-        record_step_finish(step, "success")
+        if not video_pilot:
+            update_episode(episode_id, status="rendered", video_path=video_file)
+        if not video_pilot:
+            record_step_finish(step, "success")
         current_step = None
+
+        if video_pilot:
+            logger.info("video_pilot_finished video=%s upload=false db_write=false", video_file)
+            return 0
 
         step = current_step = record_step_start(episode_id, "upload")
         video_id = upload_to_youtube(
@@ -159,7 +170,7 @@ def main() -> int:
         logger.error("pipeline_aborted_validation reason=%s", e)
         if current_step:
             record_step_finish(current_step, "failed", error_code=str(e)[:200])
-        if episode_id:
+        if episode_id and not video_pilot:
             try:
                 update_episode(episode_id, status="aborted_validation", degraded_reason=str(e))
             except Exception:
@@ -170,7 +181,7 @@ def main() -> int:
         # 실패한 step 을 running 으로 방치하면 관측이 어긋난다 (Ep.1 upload 고아 사례)
         if current_step:
             record_step_finish(current_step, "failed", error_code=f"{type(e).__name__}"[:200])
-        if episode_id:
+        if episode_id and not video_pilot:
             try:
                 update_episode(
                     episode_id,
@@ -190,4 +201,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    if sys.argv[1:] not in ([], ["--video-pilot"]):
+        raise SystemExit("usage: python main.py [--video-pilot]")
+    raise SystemExit(main(video_pilot="--video-pilot" in sys.argv[1:]))

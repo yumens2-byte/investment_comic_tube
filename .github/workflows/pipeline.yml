@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 범위 (영상 파일럿은 YouTube 업로드 없음)'
+        description: '실행 범위 (파일럿은 실제 생성, DB 쓰기와 YouTube 업로드 없음)'
         required: true
         type: choice
         default: video-pilot
@@ -46,14 +46,20 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run story-to-video pilot
+      - name: Run production-path video pilot
         if: github.event_name == 'workflow_dispatch' && inputs.mode == 'video-pilot'
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           LOG_DIR: logs
           ARTIFACT_DIR: artifacts
         run: |
           export PYTHONPATH=$(pwd)
-          python scripts/run_video_pilot.py tests/fixtures/episode_sample.json
+          python main.py --video-pilot
 
       - name: Run full orchestrator
         if: github.event_name == 'schedule' || inputs.mode == 'full'

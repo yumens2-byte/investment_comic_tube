@@ -30,6 +30,15 @@ MARKET_DATA_CALM = {
 
 
 class VillainSelectionTest(unittest.TestCase):
+    @patch("src.director.start_episode")
+    @patch("src.director.fetch_latest_episode_state", return_value={"episode": 29})
+    @patch.dict("os.environ", {}, clear=True)
+    def test_video_pilot_reads_previous_state_without_creating_episode(self, _fetch, start):
+        script = generate_connected_script(MARKET_DATA_HIGH_TNX, persist=False)
+        self.assertEqual(script["episode"], 30)
+        self.assertNotIn("episode_id", script)
+        start.assert_not_called()
+
     @patch("src.director.start_episode", return_value="ep-0103-abcd1234")
     @patch("src.director.fetch_latest_episode_state", return_value={"episode": 102})
     @patch.dict("os.environ", {}, clear=True)

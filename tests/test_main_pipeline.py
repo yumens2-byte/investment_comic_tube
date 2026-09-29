@@ -66,7 +66,7 @@ class BuildScenesTest(unittest.TestCase):
 class PipelineOrchestrationTest(unittest.TestCase):
     def setUp(self):
         self.duplicate_check = patch("main.validate_not_published_today")
-        self.duplicate_check.start()
+        self.duplicate_mock = self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)
         self.video_check = patch("main.validate_rendered_video")
         self.video_check.start()
@@ -76,6 +76,49 @@ class PipelineOrchestrationTest(unittest.TestCase):
         for handler in logging.getLogger().handlers[:]:
             handler.close()
             logging.getLogger().removeHandler(handler)
+
+    @patch("main.record_step_start")
+    @patch("main.record_step_finish")
+    @patch("main.update_episode")
+    @patch("main.upload_to_youtube")
+    @patch("main.get_youtube_service")
+    @patch("main.render_video", return_value="output_short.mp4")
+    @patch("main.synthesize_narrations", return_value=(AUDIO6, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
+    @patch("main.generate_connected_script", return_value=SCRIPT_OK)
+    @patch("main.fetch_market_data", return_value=MARKET)
+    def test_pilot_uses_real_generation_without_upload_or_db_writes(
+        self, fetch, script, images, tts, render, auth, upload, update, finish, start
+    ):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+            self.assertEqual(main.main(video_pilot=True), 0)
+        self.duplicate_mock.assert_not_called()
+        fetch.assert_called_once()
+        script.assert_called_once_with(MARKET, persist=False)
+        images.assert_called_once()
+        tts.assert_called_once()
+        render.assert_called_once()
+        auth.assert_not_called()
+        upload.assert_not_called()
+        update.assert_not_called()
+        start.assert_not_called()
+        finish.assert_not_called()
+
+    @patch("main.update_episode")
+    @patch("main.upload_to_youtube")
+    @patch("main.render_video")
+    @patch("main.synthesize_narrations", return_value=([None] * 6, "tts:failed"))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
+    @patch("main.generate_connected_script", return_value=SCRIPT_OK)
+    @patch("main.fetch_market_data", return_value=MARKET)
+    def test_pilot_incomplete_audio_fails_without_upload_or_db_write(
+        self, _fetch, _script, _images, _tts, render, upload, update
+    ):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+            self.assertEqual(main.main(video_pilot=True), 1)
+        render.assert_not_called()
+        upload.assert_not_called()
+        update.assert_not_called()
 
     @patch("main.update_episode")
     @patch("main.upload_to_youtube")
