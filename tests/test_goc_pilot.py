@@ -19,6 +19,9 @@ class GocEventTest(unittest.TestCase):
         self.assertEqual(latest_edt_event(today=date(2026, 9, 30)), row)
         with self.assertRaises(ValidationError):
             latest_edt_event(today=date(2026, 10, 1))
+        self.assertEqual(latest_edt_event(today=date(2026, 10, 1), max_age_days=1), row)
+        with self.assertRaises(ValidationError):
+            latest_edt_event(today=date(2026, 10, 2), max_age_days=1)
 
     @patch("src.goc.get_client")
     def test_no_published_event_fails(self, get_client):
@@ -93,7 +96,7 @@ class GocPipelineTest(unittest.TestCase):
         self, update, upload, render_env, market_check, event, script, images,
         image_check, tts, package_check, render, video_check
     ):
-        event.return_value = {"episode_no": 30, "market_snapshot": {}}
+        event.return_value = {"episode_no": 30, "market_as_of": "2026-09-29T17:10:00Z", "market_snapshot": {}}
         script.return_value = {"track": "GOC", "storyboard": [
             {"beat": name, "scene": "GOC", "narration": "보호"}
             for name in ("HOOK", "THREAT", "IMPACT", "HERO", "CLASH", "LESSON")
@@ -101,6 +104,7 @@ class GocPipelineTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
             self.assertEqual(main.goc_video_pilot(), 0)
         self.assertEqual(tts.call_args.kwargs["voice_name"], GOC_VOICE)
+        self.assertEqual(event.call_args.kwargs, {"max_age_days": 1})
         self.assertEqual(images.call_args.args[0]["track"], "GOC")
         upload.assert_not_called()
         update.assert_not_called()

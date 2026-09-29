@@ -28,8 +28,8 @@ GOC_IMAGE_SLOTS = [
 ]
 
 
-def latest_edt_event(*, today=None) -> dict:
-    """Use the published EDT event from the current Korean calendar day."""
+def latest_edt_event(*, today=None, max_age_days: int = 0) -> dict:
+    """Use the latest published EDT event, with an explicit Korean-day age limit."""
     today = today or datetime.now(ZoneInfo("Asia/Seoul")).date()
     try:
         result = (get_client().table("episodes")
@@ -40,12 +40,15 @@ def latest_edt_event(*, today=None) -> dict:
         raise EpisodeStateUnavailable("GOC 사건 조회 실패") from exc
     rows = result.data or []
     if not rows:
-        raise ValidationError("같은 날 발행된 EDT 사건이 없음")
+        raise ValidationError("발행된 EDT 사건이 없음")
     event = rows[0]
     try:
         timestamp = datetime.fromisoformat(event["market_as_of"].replace("Z", "+00:00"))
-        if timestamp.tzinfo is None or timestamp.astimezone(ZoneInfo("Asia/Seoul")).date() != today:
-            raise ValidationError("EDT 사건의 한국 날짜가 오늘과 다름")
+        if timestamp.tzinfo is None:
+            raise ValidationError("EDT 사건의 기준 시각에 시간대가 없음")
+        age_days = (today - timestamp.astimezone(ZoneInfo("Asia/Seoul")).date()).days
+        if not 0 <= age_days <= max_age_days:
+            raise ValidationError("EDT 사건이 허용된 한국 날짜 범위 밖임")
     except (KeyError, AttributeError, ValueError) as exc:
         raise ValidationError("EDT 사건의 기준 시각이 없음") from exc
     if not isinstance(event.get("market_snapshot"), dict) or not event.get("villain"):
@@ -66,6 +69,8 @@ def build_goc_script(event: dict) -> dict:
         "주인공 GOC(Guardian of Capital)는 같은 시장 사건을 자본 보호와 위험 통제 시점에서 본다. "
         "EDT의 대사나 행동을 복제하지 말고, 노출·비중·손실 한도·방어선·남은 불확실성을 설명한다. "
         "투자 수익 보장, 매수 권유, 제공하지 않은 숫자 금지. 각 장면 한 문장. "
+        "이 사건을 오늘의 신규 시장 데이터라고 말하지 말 것. "
+        f"원본 EDT 기준 시각(ISO 8601): {event['market_as_of']}; "
         f"빌런: {event['villain']}; EDT 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
     )
     key = os.environ.get("GEMINI_API_KEY")
