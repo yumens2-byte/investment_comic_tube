@@ -29,11 +29,13 @@ logger = logging.getLogger(__name__)
 
 
 def goc_video_pilot() -> int:
-    """Generate GOC media from today's EDT event without DB writes or upload."""
+    """Generate GOC media from a recent EDT event without DB writes or upload."""
     configure_logging()
     try:
         validate_render_environment()
-        event = latest_edt_event()
+        event = latest_edt_event(max_age_days=1)
+        logger.info("goc_pilot_source episode=%s market_as_of=%s",
+                    event["episode_no"], event["market_as_of"])
         validate_market_data(event["market_snapshot"])
         script = build_goc_script(event)
         storyboard = script["storyboard"]
