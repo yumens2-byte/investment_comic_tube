@@ -68,11 +68,29 @@ class PipelineOrchestrationTest(unittest.TestCase):
         self.duplicate_check = patch("main.validate_not_published_today")
         self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)
+        self.video_check = patch("main.validate_rendered_video")
+        self.video_check.start()
+        self.addCleanup(self.video_check.stop)
 
     def tearDown(self):
         for handler in logging.getLogger().handlers[:]:
             handler.close()
             logging.getLogger().removeHandler(handler)
+
+    @patch("main.update_episode")
+    @patch("main.upload_to_youtube")
+    @patch("main.render_video", return_value="output_short.mp4")
+    @patch("main.synthesize_narrations", return_value=(AUDIO6, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
+    @patch("main.generate_connected_script", return_value=SCRIPT_OK)
+    @patch("main.fetch_market_data", return_value=MARKET)
+    def test_invalid_rendered_video_blocks_upload(self, _fetch, _script, _images, _tts, _render, upload, update):
+        from src.content_quality import ContentQualityError
+        with patch("main.validate_rendered_video", side_effect=ContentQualityError("missing audio")):
+            with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+                self.assertEqual(main.main(), 1)
+        upload.assert_not_called()
+        self.assertEqual(update.call_args.kwargs["status"], "aborted_validation")
 
     @patch("main.record_step_finish")
     @patch("main.get_youtube_service", return_value="youtube-service")

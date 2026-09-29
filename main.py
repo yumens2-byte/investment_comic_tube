@@ -1,7 +1,7 @@
 import logging
 
 from src.collector import fetch_market_data
-from src.content_quality import VERSION as QUALITY_VERSION, validate_media_package
+from src.content_quality import VERSION as QUALITY_VERSION, validate_media_package, validate_rendered_video
 from src.director import generate_connected_script
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
@@ -132,6 +132,7 @@ def main() -> int:
         step = current_step = record_step_start(episode_id, "render")
         scenes = _build_scenes(storyboard, image_paths, audio_paths)
         video_file = render_video(script_data, scenes=scenes, require_storyboard=True)
+        validate_rendered_video(video_file)
         update_episode(episode_id, status="rendered", video_path=video_file)
         record_step_finish(step, "success")
         current_step = None

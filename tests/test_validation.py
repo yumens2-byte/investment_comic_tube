@@ -29,6 +29,16 @@ def _good_storyboard():
 
 
 class MarketValidationTest(unittest.TestCase):
+    def test_nonfinite_and_boolean_required_values_always_abort(self):
+        for value in (float("nan"), float("inf"), float("-inf"), True):
+            with self.subTest(value=value), patch.dict("os.environ", {"STRICT_VALIDATION": "false"}):
+                with self.assertRaises(MarketDataIncomplete):
+                    validate_market_data(_good_market(VIX=_metric(value, 0.3)))
+
+    def test_nonfinite_change_aborts(self):
+        with self.assertRaises(MarketDataIncomplete):
+            validate_market_data(_good_market(TNX=_metric(4.5, float("nan"))))
+
     def test_complete_data_passes(self):
         validate_market_data(_good_market())  # 예외 없으면 통과
 

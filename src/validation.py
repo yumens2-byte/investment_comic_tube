@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,7 @@ def validate_market_data(market_data: dict) -> None:
         raise MarketDataIncomplete("시장 데이터가 비어 있다")
 
     problems: list[str] = []
+    nonfinite: list[str] = []
     for name in REQUIRED_INDICATORS:
         metric = market_data.get(name)
         if not isinstance(metric, dict):
@@ -74,8 +76,16 @@ def validate_market_data(market_data: dict) -> None:
             value = metric.get(field)
             if value is None:
                 problems.append(f"{name}.{field}=None")
+            elif isinstance(value, bool):
+                nonfinite.append(f"{name}.{field}(bool)")
             elif not isinstance(value, (int, float)):
                 problems.append(f"{name}.{field} 타입 이상({type(value).__name__})")
+            elif not math.isfinite(value):
+                nonfinite.append(f"{name}.{field}")
+
+    # NaN/Inf/bool은 비교·반올림·대본 생성에서 위험하므로 완화 모드에도 차단한다.
+    if nonfinite:
+        raise MarketDataIncomplete(f"유한하지 않은 시장 지표 -- 발행 중단: {', '.join(nonfinite)}")
 
     missing_optional = [
         name
