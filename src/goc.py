@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 
 from src.db_client import get_client
 from src.drive_manager import EpisodeStateUnavailable, PUBLISHED_STATUSES
+from src.renderer import HOOK_WRAP_CHARS, _wrap_korean
 from src.validation import ValidationError
 
 GOC_VOICE = "Kore"
@@ -69,6 +70,8 @@ def build_goc_script(event: dict) -> dict:
         "주인공 GOC(Guardian of Capital)는 같은 시장 사건을 자본 보호와 위험 통제 시점에서 본다. "
         "EDT의 대사나 행동을 복제하지 말고, 노출·비중·손실 한도·방어선·남은 불확실성을 설명한다. "
         "투자 수익 보장, 매수 권유, 제공하지 않은 숫자 금지. 각 장면 한 문장. "
+        "영상 자막 공간 제한: 첫 문장은 한글 13자씩 최대 2줄, 나머지는 19자씩 최대 3줄. "
+        "공백을 포함한 첫 문장 전체를 20자 이내, 나머지 각 문장은 40자 이내로 간결하게 작성. "
         "이 사건을 오늘의 신규 시장 데이터라고 말하지 말 것. "
         f"원본 EDT 기준 시각(ISO 8601): {event['market_as_of']}; "
         f"빌런: {event['villain']}; EDT 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
@@ -77,16 +80,29 @@ def build_goc_script(event: dict) -> dict:
     if not key:
         raise ValidationError("GOC 대본 API 키 없음")
     client = genai.Client(api_key=key)
-    response = client.models.generate_content(
-        model="gemini-3.6-flash", contents=prompt)
-    try:
-        narrations = json.loads((response.text or "").strip())
-    except (ValueError, AttributeError) as exc:
-        raise ValidationError("GOC 대본 JSON 파싱 실패") from exc
-    if not isinstance(narrations, list) or len(narrations) != 6 or not all(
-        isinstance(line, str) and line.strip() for line in narrations
-    ):
-        raise ValidationError("GOC 대본 6비트 불완전")
+    for attempt in range(2):
+        response = client.models.generate_content(
+            model="gemini-3.6-flash", contents=prompt)
+        try:
+            narrations = json.loads((response.text or "").strip())
+        except (ValueError, AttributeError) as exc:
+            raise ValidationError("GOC 대본 JSON 파싱 실패") from exc
+        if not isinstance(narrations, list) or len(narrations) != 6 or not all(
+            isinstance(line, str) and line.strip() for line in narrations
+        ):
+            raise ValidationError("GOC 대본 6비트 불완전")
+        invalid = []
+        for index, line in enumerate(narrations):
+            try:
+                _wrap_korean(line.strip(), HOOK_WRAP_CHARS if index == 0 else 19,
+                             max_lines=2 if index == 0 else 3)
+            except ValueError:
+                invalid.append(index + 1)
+        if not invalid:
+            break
+        if attempt == 1:
+            raise ValidationError(f"GOC 자막 길이 초과 비트={invalid}")
+        prompt += f" 앞선 응답의 {invalid}번째 문장이 화면을 넘었다. 전체 JSON 배열을 더 짧게 다시 작성."
     storyboard = [
         {"beat": beat, "scene": scene, "narration": line.strip(), "is_hook": idx == 0}
         for idx, ((beat, scene), line) in enumerate(zip(GOC_SCENES, narrations, strict=True))
