@@ -66,6 +66,19 @@ class GocEventTest(unittest.TestCase):
                  "villain": "Bull Brute", "market_snapshot": {"VIX": {"close": 16}}}
         self.assertEqual(len(build_goc_script(event)["storyboard"]), 6)
 
+    @patch.dict("os.environ", {"GEMINI_API_KEY": "test"})
+    @patch("google.genai.Client")
+    def test_overlong_caption_retried_before_image_or_tts(self, client):
+        responses = [type("Response", (), {"text": text})() for text in (
+            '["' + '긴문장' * 20 + '","둘","셋","넷","다섯","여섯"]',
+            '["위험을 살핀다","둘","셋","넷","다섯","여섯"]',
+        )]
+        client.return_value.models.generate_content.side_effect = responses
+        event = {"episode_no": 29, "market_as_of": "2026-09-29T04:03:43+00:00",
+                 "villain": "Bull Brute", "market_snapshot": {"VIX": {"close": 16}}}
+        self.assertEqual(build_goc_script(event)["storyboard"][0]["narration"], "위험을 살핀다")
+        self.assertEqual(client.return_value.models.generate_content.call_count, 2)
+
     def test_goc_image_prompt_has_no_edt_character_description(self):
         prompt = _build_prompt({"track": "GOC", "villain": "Bull Brute"}, "protect capital", True)
         self.assertIn("Guardian of Capital", prompt)
