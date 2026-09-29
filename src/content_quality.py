@@ -39,9 +39,9 @@ def validate_media_package(image_paths: list[str | None], audio_paths: list[str 
         )
 
 
-def validate_image_assets(image_paths: list[str | None]) -> None:
+def validate_image_assets(image_paths: list[str | None], *, expected_slots: int = EXPECTED_IMAGE_SLOTS) -> None:
     """손상·가로 이미지와 파일럿에서 관찰된 하단 회색 빈 띠를 차단한다."""
-    if len(image_paths) != EXPECTED_IMAGE_SLOTS or any(not path for path in image_paths):
+    if len(image_paths) != expected_slots or any(not path for path in image_paths):
         raise ContentQualityError("필수 이미지 슬롯이 누락됐다")
     for index, path in enumerate(image_paths):
         try:

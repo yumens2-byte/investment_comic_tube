@@ -73,8 +73,8 @@ def build_goc_script(event: dict) -> dict:
         "영상 자막 공간 제한: 첫 문장은 한글 13자씩 최대 2줄, 나머지는 19자씩 최대 3줄. "
         "공백을 포함한 첫 문장 전체를 20자 이내, 나머지 각 문장은 40자 이내로 간결하게 작성. "
         "이 사건을 오늘의 신규 시장 데이터라고 말하지 말 것. "
-        f"원본 EDT 기준 시각(ISO 8601): {event['market_as_of']}; "
-        f"빌런: {event['villain']}; EDT 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
+        f"원본 시장 사건 기준 시각(ISO 8601): {event['market_as_of']}; "
+        f"빌런: {event['villain']}; 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
     )
     key = os.environ.get("GEMINI_API_KEY")
     if not key:

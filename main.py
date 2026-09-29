@@ -9,6 +9,8 @@ from src.content_quality import (
     validate_rendered_video,
 )
 from src.director import generate_connected_script
+from src.daily_hero import select_daily_hero
+from src.market_regime import select_villain
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
 from src.goc import GOC_IMAGE_SLOTS, GOC_VOICE, build_goc_script, latest_edt_event
@@ -97,9 +99,11 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
     return scenes
 
 
-def main(*, video_pilot: bool = False) -> int:
+def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
+    if track not in ("EDT", "GOC"):
+        raise ValueError("unknown hero track")
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s quality_gate=%s video_pilot=%s", log_path, QUALITY_VERSION, video_pilot)
+    logger.info("pipeline_started log_file=%s quality_gate=%s video_pilot=%s track=%s", log_path, QUALITY_VERSION, video_pilot, track)
 
     episode_id = None
     video_id = None
@@ -126,8 +130,13 @@ def main(*, video_pilot: bool = False) -> int:
         validate_market_data(market_data)
 
         # script 생성 시 episode row가 status=script_ready 로 선기록된다
-        script_data = (generate_connected_script(market_data, persist=False) if video_pilot
-                       else generate_connected_script(market_data))
+        if track == "GOC":
+            script_data = generate_connected_script(market_data, persist=not video_pilot, track=track)
+        else:
+            script_data = (generate_connected_script(market_data, persist=False) if video_pilot
+                           else generate_connected_script(market_data))
+        script_data["track"] = track
+        script_data["privacy"] = "private"
         episode_id = script_data.get("episode_id")
         if script_data.get("degraded_reason"):
             degraded.append(script_data["degraded_reason"])
@@ -139,7 +148,7 @@ def main(*, video_pilot: bool = False) -> int:
         step = current_step = record_step_start(episode_id, "image") if not video_pilot else None
         # 비용 통제: 비트(6개)마다가 아니라 슬롯(기본 3개)만큼만 생성한다
         image_paths, image_degraded = generate_scene_images(
-            script_data, scenes=SLOT_SCENES
+            script_data, scenes=GOC_IMAGE_SLOTS if track == "GOC" else SLOT_SCENES
         )
         if image_degraded:
             degraded.append(image_degraded)
@@ -154,7 +163,8 @@ def main(*, video_pilot: bool = False) -> int:
 
         step = current_step = record_step_start(episode_id, "tts") if not video_pilot else None
         tones = [beat.get("tts_tone") for beat in storyboard]
-        audio_paths, tts_degraded = synthesize_narrations(narrations, tones=tones)
+        audio_paths, tts_degraded = (synthesize_narrations(narrations, tones=tones, voice_name=GOC_VOICE)
+                                   if track == "GOC" else synthesize_narrations(narrations, tones=tones))
         if tts_degraded:
             degraded.append(tts_degraded)
         if not video_pilot:
@@ -235,8 +245,43 @@ def main(*, video_pilot: bool = False) -> int:
     return 0
 
 
+def budget_video_pilot(track=None) -> int:
+    """One-image, one-voice preview; no text generation, DB writes or upload."""
+    configure_logging()
+    track = track or select_daily_hero()
+    try:
+        validate_render_environment()
+        market = fetch_market_data()
+        validate_market_data(market)
+        villain, theme, _ = select_villain(market, {})
+        caption = "자본의 방어선을 지킨다" if track == "GOC" else "시장의 위협에 맞선다"
+        script = {"track": track, "preview": True, "episode": "PREVIEW", "villain": villain,
+                  "theme": theme, "market_snapshot": market}
+        logger.info("budget_pilot_plan track=%s text_calls=0 image_calls=1 tts_calls=1 upload=false db_write=false", track)
+        images, _ = generate_scene_images(script, scenes=[GOC_IMAGE_SLOTS[0] if track == "GOC" else SLOT_SCENES[0]],
+                                          model_name="gemini-3.1-flash-lite-image", image_size="1K")
+        validate_image_assets(images, expected_slots=1)
+        audio, _ = synthesize_narrations([caption], voice_name=GOC_VOICE if track == "GOC" else None,
+                                        model_name="gemini-3.8-flash-lite-tts", max_attempts=1)
+        if len(audio) != 1 or not audio[0]:
+            raise ValidationError("미리보기 음성 생성 실패")
+        video = render_video(script, scenes=[{"image": images[0], "caption": caption,
+                            "audio": audio[0], "is_hook": False}], require_storyboard=True)
+        validate_rendered_video(video)
+        logger.info("budget_pilot_finished track=%s video=%s", track, video)
+        return 0
+    except Exception:
+        logger.exception("budget_pilot_failed track=%s", track)
+        return 1
+
+
 if __name__ == "__main__":
-    if sys.argv[1:] not in ([], ["--video-pilot"], ["--goc-video-pilot"]):
-        raise SystemExit("usage: python main.py [--video-pilot|--goc-video-pilot]")
-    raise SystemExit(goc_video_pilot() if "--goc-video-pilot" in sys.argv[1:] else
-                     main(video_pilot="--video-pilot" in sys.argv[1:]))
+    modes = {"--video-pilot": lambda: budget_video_pilot("EDT"),
+             "--goc-video-pilot": lambda: budget_video_pilot("GOC"),
+             "--daily-video-pilot": budget_video_pilot,
+             "--production-video-pilot": lambda: main(video_pilot=True, track=select_daily_hero())}
+    if not sys.argv[1:]:
+        raise SystemExit(main(track=select_daily_hero()))
+    if len(sys.argv) != 2 or sys.argv[1] not in modes:
+        raise SystemExit("usage: python main.py [--video-pilot|--goc-video-pilot|--daily-video-pilot|--production-video-pilot]")
+    raise SystemExit(modes[sys.argv[1]]())

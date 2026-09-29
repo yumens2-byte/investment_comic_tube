@@ -9,17 +9,18 @@ concurrency:
 
 on:
   schedule:
-    - cron: '0 0 * * *' # 매일 KST 오전 9시 (UTC 00:00)
+    - cron: '0 1 * * *' # 매일 KST 오전 10시 (UTC 01:00)
   workflow_dispatch:
     inputs:
       mode:
-        description: '실행 범위 (파일럿은 실제 생성, DB 쓰기와 YouTube 업로드 없음)'
+        description: '파일럿=저비용 이미지 1장+음성 1개, full=일일 무작위 캐릭터 비공개 발행'
         required: true
         type: choice
-        default: video-pilot
+        default: daily-video-pilot
         options:
           - video-pilot
           - goc-video-pilot
+          - daily-video-pilot
           - full
 
 jobs:
@@ -48,7 +49,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run production-path video pilot
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'video-pilot'
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'video-pilot' || inputs.mode == 'daily-video-pilot' || inputs.mode == 'goc-video-pilot')
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -60,7 +61,7 @@ jobs:
           ARTIFACT_DIR: artifacts
         run: |
           export PYTHONPATH=$(pwd)
-          python main.py --video-pilot
+          python main.py --${{ inputs.mode }}
 
       - name: Run full orchestrator
         if: github.event_name == 'schedule' || inputs.mode == 'full'
@@ -81,18 +82,6 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd)
           python main.py
-
-      - name: Run GOC production-path pilot
-        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'goc-video-pilot'
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          LOG_DIR: logs
-          ARTIFACT_DIR: artifacts
-        run: |
-          export PYTHONPATH=$(pwd)
-          python main.py --goc-video-pilot
 
       - name: Upload pipeline diagnostics
         if: always()

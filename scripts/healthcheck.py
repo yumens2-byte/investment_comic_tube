@@ -28,7 +28,7 @@ VERSION = "1.0.0"
 WORKFLOW_PATH = Path(".github/workflows/pipeline.yml")
 
 # 기대 설정값. 운영 정책이 바뀌면 여기만 고친다.
-EXPECTED_CRON = "0 0 * * *"          # 매일 KST 09:00 (UTC 00:00)
+EXPECTED_CRON = "0 1 * * *"          # 매일 KST 10:00 (UTC 01:00)
 EXPECTED_PRIVACY = "private"
 EXPECTED_FIRST_EPISODE_BASE = 0      # next_ep = base + 1 이므로 0 이면 1화부터
 
@@ -95,7 +95,7 @@ def check_workflow_config(r: Report) -> None:
     elif crons[0] != EXPECTED_CRON:
         r.fail("cron", f"기대 '{EXPECTED_CRON}' != 실제 '{crons[0]}'")
     else:
-        r.ok("cron", f"'{crons[0]}' (매일 KST 09:00)")
+        r.ok("cron", f"'{crons[0]}' (매일 KST 10:00)")
 
     privacy = re.search(r"YOUTUBE_DEFAULT_PRIVACY:\s*(\S+)", text)
     if not privacy:

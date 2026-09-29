@@ -57,6 +57,8 @@ def synthesize_narrations(
     output_dir: str = "artifacts/audio",
     tones: list[str | None] | None = None,
     voice_name: str | None = None,
+    model_name: str | None = None,
+    max_attempts: int | None = None,
 ) -> tuple[list[str | None], str | None]:
     """내레이션 문장들을 음성 파일로 합성한다.
 
@@ -78,7 +80,9 @@ def synthesize_narrations(
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    client = genai.Client(api_key=api_key)
+    client = (genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(attempts=1))) if max_attempts == 1 else
+        genai.Client(api_key=api_key))
     config = types.GenerateContentConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
@@ -102,10 +106,10 @@ def synthesize_narrations(
         # 한도 소진이 아닌 실패는 1회 재시도한다.
         pcm = None
         quota_hit = False
-        for attempt in range(TTS_MAX_ATTEMPTS):
+        for attempt in range(max_attempts if max_attempts is not None else TTS_MAX_ATTEMPTS):
             try:
                 response = client.models.generate_content(
-                    model=TTS_MODEL, contents=prompt, config=config
+                    model=model_name or TTS_MODEL, contents=prompt, config=config
                 )
                 pcm = _extract_pcm(response)
             except Exception as e:  # noqa: BLE001 - 외부 API 실패는 무음 장면으로 폴백
@@ -143,7 +147,7 @@ def synthesize_narrations(
         paths.append(str(path))
 
     ok_count = sum(1 for p in paths if p)
-    logger.info("tts_finished ok=%s total=%s model=%s", ok_count, len(narrations), TTS_MODEL)
+    logger.info("tts_finished ok=%s total=%s model=%s", ok_count, len(narrations), model_name or TTS_MODEL)
 
     if ok_count == 0:
         return paths, f"tts:{last_error or 'unknown'}"

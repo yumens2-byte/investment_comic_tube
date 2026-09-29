@@ -836,7 +836,7 @@ def render_video(
     if mode == "storyboard":
         try:
             _render_storyboard(scenes, output_path, ffmpeg_log,
-                               include_outro=script_data.get("track") != "GOC")
+                               include_outro=script_data.get("track") != "GOC" and not script_data.get("preview"))
         except Exception as e:  # noqa: BLE001 - 스토리보드 실패는 텍스트카드로 폴백
             if require_storyboard:
                 raise RuntimeError("storyboard render failed; text card upload blocked") from e
