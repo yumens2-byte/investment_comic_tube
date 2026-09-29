@@ -44,8 +44,8 @@ def _build_metric(hist) -> dict:
         return _empty_metric()
 
     close = float(closes.iloc[-1])
-    prev_close = float(closes.iloc[-2]) if len(closes) > 1 else close
-    change_pct = ((close - prev_close) / prev_close * 100) if prev_close else 0.0
+    prev_close = float(closes.iloc[-2]) if len(closes) > 1 else None
+    change_pct = ((close - prev_close) / prev_close * 100) if prev_close else None
 
     sma20 = None
     dev_pct = None
@@ -56,7 +56,7 @@ def _build_metric(hist) -> dict:
 
     return {
         "close": round(close, 2),
-        "change_pct": round(change_pct, 2),
+        "change_pct": round(change_pct, 2) if change_pct is not None else None,
         "sma20": round(sma20, 2) if sma20 is not None else None,
         "dev_pct": round(dev_pct, 2) if dev_pct is not None else None,
         "source": "yfinance",

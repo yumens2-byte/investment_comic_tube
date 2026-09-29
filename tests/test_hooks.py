@@ -94,11 +94,8 @@ class HookLineTest(unittest.TestCase):
 
 class CaptionRenderTest(unittest.TestCase):
     def test_long_korean_wraps_to_two_lines(self):
-        wrapped = _wrap_korean("금리가 4.76%까지 솟구치며 긴축 공포가 짙어집니다", HOOK_WRAP_CHARS)
-        lines = wrapped.split("\n")
-        self.assertLessEqual(len(lines), 2)
-        for line in lines:
-            self.assertLessEqual(len(line), HOOK_WRAP_CHARS)
+        with self.assertRaisesRegex(ValueError, "caption exceeds"):
+            _wrap_korean("금리가 4.76%까지 솟구치며 긴축 공포가 짙어집니다", HOOK_WRAP_CHARS)
 
     def test_short_text_stays_single_line(self):
         self.assertNotIn("\n", _wrap_korean("짧은 훅", HOOK_WRAP_CHARS))
@@ -125,16 +122,16 @@ class CaptionRenderTest(unittest.TestCase):
 class HookAudioFilterTest(unittest.TestCase):
     def test_long_narration_is_compressed_with_atempo(self):
         f = _hook_audio_filter(4.2, 3.0, audio_index=1, sfx_index=None)
-        self.assertIn("atempo=1.400", f)
+        self.assertIn("atempo=1.474", f)
         self.assertIn("[1:a]", f)
 
     def test_short_narration_is_not_compressed(self):
         f = _hook_audio_filter(2.5, 3.0, audio_index=1, sfx_index=None)
         self.assertNotIn("atempo", f)
 
-    def test_atempo_is_capped(self):
-        f = _hook_audio_filter(30.0, 3.0, audio_index=1, sfx_index=None)
-        self.assertIn("atempo=1.500", f)
+    def test_excessive_tempo_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "safe tempo"):
+            _hook_audio_filter(30.0, 3.0, audio_index=1, sfx_index=None)
 
     def test_sfx_uses_correct_input_index(self):
         # 입력 0은 이미지이므로 SFX 는 2번. 인덱스가 어긋나면 ffmpeg 가 실패한다
@@ -146,8 +143,12 @@ class HookAudioFilterTest(unittest.TestCase):
         f = _hook_audio_filter(2.0, 3.0, audio_index=1, sfx_index=None)
         self.assertNotIn("amix", f)
 
-    def test_hook_duration_constraint_is_three_seconds(self):
-        self.assertEqual(HOOK_MAX_SEC, 3.0)
+    def test_hook_duration_uses_voice_length(self):
+        from src.renderer import _hook_duration
+        self.assertGreater(_hook_duration(4.88), 3.25)
+        self.assertLessEqual(_hook_duration(4.88), HOOK_MAX_SEC)
+        with self.assertRaises(ValueError):
+            _hook_duration(20.0)
 
 
 class SfxSlotTest(unittest.TestCase):

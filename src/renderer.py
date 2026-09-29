@@ -65,9 +65,11 @@ KEN_BURNS_FPS = 30
 KEN_BURNS_MAX_ZOOM = 1.12
 KEN_BURNS_SPEED = 0.0012
 
-# --- 오프닝 훅(0~3초) 전용 연출 파라미터 ---
+# --- 오프닝 훅 연출 파라미터 ---
 # 쇼츠 피드에서 스크롤을 멈추게 하는 구간이라 일반 비트와 다른 규칙을 쓴다.
-HOOK_MAX_SEC = 3.0            # 비기능 요구사항: 훅은 3초를 절대 넘기지 않는다
+HOOK_MIN_SEC = 3.0
+HOOK_MAX_SEC = 8.0            # 음성을 자르지 않되 지나치게 긴 훅은 재작성한다
+HOOK_PREFERRED_TEMPO = 1.25
 HOOK_PUNCH_START_ZOOM = 1.35  # 크게 시작해 급속히 빠지는 펀치인
 HOOK_PUNCH_SPEED = 0.11       # 프레임당 축소량 (일반 0.0012 대비 훨씬 공격적)
 HOOK_SHAKE_PX = 18            # 화면 흔들림 진폭 (1080px 대비 1.7%)
@@ -78,7 +80,7 @@ HOOK_WRAP_CHARS = 13          # 한국어 기준 1080px 에 들어가는 글자�
 # 자막을 화면 중앙에 두면 클로즈업된 EDT 의 얼굴(입/송곳니)을 덮어 임팩트가 반감된다.
 # 하단 1/3 지점에 배치하고, 이미지 프롬프트에서도 하단을 비우도록 요구한다.
 HOOK_TEXT_Y_RATIO = 0.68
-ATEMPO_MAX = 1.5              # 3초 초과 내레이션 압축 상한
+ATEMPO_MAX = 1.5
 
 # 최종 음량 정규화. YouTube 는 -14 LUFS 기준으로 재정규화하므로 맞춰 둔다.
 # 회차마다 체감 음량이 달라지는 문제와 클리핑(-1.9dB 근접 사례)을 함께 막는다.
@@ -118,7 +120,16 @@ def _font_from_fc_match() -> str | None:
     except (FileNotFoundError, subprocess.SubprocessError):
         return None
     path = result.stdout.strip()
-    return path if path and Path(path).exists() else None
+    if not path or not Path(path).exists():
+        return None
+    try:
+        coverage = subprocess.run(
+            ["fc-query", "-f", "%{lang}", path],
+            capture_output=True, text=True, check=False, timeout=10,
+        )
+    except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    return path if "ko" in coverage.stdout.replace("|", "-").split("-") else None
 
 
 def find_kr_font() -> str | None:
@@ -164,7 +175,7 @@ def _escape_drawtext(text: str) -> str:
     return text.replace("\\", r"\\").replace("'", r"\'").replace(":", r"\:")
 
 
-def _wrap_korean(text: str, width: int) -> str:
+def _wrap_korean(text: str, width: int, max_lines: int = 2) -> str:
     """한국어 자막을 폭에 맞춰 줄바꿈한다.
 
     기존 자막 깨짐 원인 중 하나가 40자 이상 한 줄이 화면 밖으로 넘친 것이었다.
@@ -186,10 +197,12 @@ def _wrap_korean(text: str, width: int) -> str:
         current = word
     if current:
         lines.append(current)
-    return "\n".join(lines[:2])  # 최대 2줄
+    if len(lines) > max_lines:
+        raise ValueError(f"caption exceeds {max_lines} lines")
+    return "\n".join(lines)
 
 
-def _write_caption_file(text: str, path: Path, width: int) -> Path:
+def _write_caption_file(text: str, path: Path, width: int, max_lines: int = 2) -> Path:
     """자막을 파일로 쓴다.
 
     인라인 text= 대신 textfile= 을 쓰는 이유:
@@ -197,7 +210,7 @@ def _write_caption_file(text: str, path: Path, width: int) -> Path:
          (실제 사고: "금리가 4.76%까지" -> 깨짐)
       2) 따옴표/콜론/쉼표 이스케이프가 아예 필요 없어진다
     """
-    path.write_text(_wrap_korean(text, width), encoding="utf-8")
+    path.write_text(_wrap_korean(text, width, max_lines), encoding="utf-8")
     return path
 
 
@@ -443,17 +456,20 @@ def _hook_audio_filter(
     audio_index: int,
     sfx_index: int | None,
 ) -> str:
-    """훅 전용 오디오 필터: 3초 초과 내레이션을 속도로 압축하고 SFX를 얹는다.
+    """훅 음성을 장면 길이에 맞추되 배속 상한을 넘으면 중단한다.
 
     입력 0번은 이미지(영상)이므로 오디오 스트림 인덱스는 1부터 시작한다.
     인덱스를 하드코딩하면 SFX 유무에 따라 매핑이 어긋난다.
     """
     chain = []
-    if narration_dur and narration_dur > target:
-        tempo = min(ATEMPO_MAX, narration_dur / target)
-        chain.append(f"[{audio_index}:a]atempo={tempo:.3f},aformat=channel_layouts=stereo[n]")
+    available = target - 0.15
+    if narration_dur and narration_dur > available:
+        tempo = narration_dur / available
+        if tempo > ATEMPO_MAX:
+            raise ValueError("hook narration exceeds safe tempo; rewrite or regenerate TTS")
+        chain.append(f"[{audio_index}:a]atempo={tempo:.3f},aformat=channel_layouts=stereo,apad=whole_dur={target:.3f}[n]")
     else:
-        chain.append(f"[{audio_index}:a]aformat=channel_layouts=stereo[n]")
+        chain.append(f"[{audio_index}:a]aformat=channel_layouts=stereo,apad=whole_dur={target:.3f}[n]")
 
     if sfx_index is not None:
         chain.append(f"[{sfx_index}:a]aformat=channel_layouts=stereo,volume=0.7[s]")
@@ -461,6 +477,15 @@ def _hook_audio_filter(
     else:
         chain.append("[n]anull[aout]")
     return ";".join(chain)
+
+
+def _hook_duration(narration_dur: float | None) -> float:
+    if narration_dur is None or narration_dur <= 0:
+        raise ValueError("hook narration duration unavailable")
+    duration = max(HOOK_MIN_SEC, narration_dur / HOOK_PREFERRED_TEMPO + 0.2)
+    if duration > HOOK_MAX_SEC:
+        raise ValueError("hook narration too long; rewrite or regenerate TTS")
+    return duration
 
 
 def _apply_bgm(video_path: str, bgm_path: str, ffmpeg_log: Path) -> None:
@@ -587,8 +612,8 @@ def _render_hook_segment(
     append: bool,
 ) -> float:
     """오프닝 훅 장면을 렌더링한다. 반환값은 실제 장면 길이(초)."""
-    duration = HOOK_MAX_SEC
     narration_dur = _probe_duration(audio_path) if audio_path else None
+    duration = _hook_duration(narration_dur)
 
     caption_file = segment_path.parent / "hook_caption.txt"
     _write_caption_file(caption, caption_file, HOOK_WRAP_CHARS)
@@ -638,15 +663,20 @@ def _render_segment(
     zoom_in: bool = True,
     narration_dur: float | None = None,
 ) -> None:
-    """이미지 1장 + (있으면) 내레이션으로 장면 하나를 렌더링한다.
-
-    자막(drawtext)은 사용하지 않는다. 한국어 폰트/개행 처리에서 깨짐이 발생했고,
-    내레이션 음성이 같은 내용을 전달하므로 화면에는 이미지만 남긴다.
-    caption 인자는 호출부 호환을 위해 남겨두되 렌더링에는 쓰지 않는다.
-    """
+    """이미지·한국어 자막·내레이션으로 본편 장면 하나를 렌더링한다."""
+    if not caption.strip():
+        raise ValueError("scene caption is empty")
+    caption_file = segment_path.parent / f"caption_{segment_path.stem}.txt"
+    _write_caption_file(caption, caption_file, 19, max_lines=3)
+    font = find_kr_font()
+    if not font:
+        raise ValueError("Korean caption font unavailable")
     video_filter = (
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"{_ken_burns_filter(duration, zoom_in)}"
+        f"{_ken_burns_filter(duration, zoom_in)},"
+        f"drawtext=fontfile='{font}':textfile='{caption_file.as_posix()}':"
+        "expansion=none:fontcolor=white:fontsize=60:borderw=5:bordercolor=black:"
+        "line_spacing=12:x=(w-text_w)/2:y=h*0.68-text_h/2"
     )
 
     cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", image_path]
@@ -659,7 +689,9 @@ def _render_segment(
     # 짧으면 무음으로 채워 장면 길이를 정확히 맞춘다.
     audio_filter = f"apad=whole_dur={duration:.3f}"
     if audio_path and narration_dur and narration_dur > duration + 0.05:
-        tempo = min(SEGMENT_ATEMPO_MAX, narration_dur / duration)
+        tempo = narration_dur / (duration - 0.15)
+        if tempo > SEGMENT_ATEMPO_MAX:
+            raise ValueError("scene narration exceeds safe tempo; rewrite or regenerate TTS")
         audio_filter = f"atempo={tempo:.3f},apad=whole_dur={duration:.3f}"
         logger.info(
             "segment_audio_compressed narration=%.2f target=%.2f tempo=%.3f",
@@ -707,11 +739,12 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
         narration_dur = None
         if audio_path:
             narration_dur = _probe_duration(audio_path)
-            if narration_dur:
-                duration = max(
-                    MIN_SEGMENT_SEC,
-                    min(MAX_SEGMENT_SEC, narration_dur + AUDIO_TAIL_PAD_SEC),
-                )
+            if narration_dur is None or narration_dur <= 0:
+                raise ValueError("scene narration duration unavailable")
+            duration = max(
+                MIN_SEGMENT_SEC,
+                min(MAX_SEGMENT_SEC, narration_dur + AUDIO_TAIL_PAD_SEC),
+            )
 
         segment_path = tmp_dir / f"segment_{idx}.mp4"
         if scene.get("is_hook"):

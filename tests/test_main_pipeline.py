@@ -65,12 +65,18 @@ class BuildScenesTest(unittest.TestCase):
 
 class PipelineOrchestrationTest(unittest.TestCase):
     def setUp(self):
+        self.font_check = patch("main.validate_render_environment")
+        self.font_check.start()
+        self.addCleanup(self.font_check.stop)
         self.duplicate_check = patch("main.validate_not_published_today")
         self.duplicate_mock = self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)
         self.video_check = patch("main.validate_rendered_video")
         self.video_check.start()
         self.addCleanup(self.video_check.stop)
+        self.image_check = patch("main.validate_image_assets")
+        self.image_check.start()
+        self.addCleanup(self.image_check.stop)
 
     def tearDown(self):
         for handler in logging.getLogger().handlers[:]:
@@ -285,6 +291,9 @@ if __name__ == "__main__":
 
 class ValidationAbortTest(unittest.TestCase):
     def setUp(self):
+        self.font_check = patch("main.validate_render_environment")
+        self.font_check.start()
+        self.addCleanup(self.font_check.stop)
         self.duplicate_check = patch("main.validate_not_published_today")
         self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)

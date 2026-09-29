@@ -78,8 +78,9 @@ def _build_prompt(script_data: dict, scene: str | None = None, has_reference: bo
         "CRITICAL: the image must contain absolutely NO text, NO letters, NO words, "
         "NO numbers, NO captions, NO speech bubbles, NO signage, NO watermarks and "
         "NO logos of any kind, in any language. Purely visual illustration only. "
-        "Leave the bottom third of the image visually simple, with no important "
-        "subject matter, so a caption can be overlaid there later."
+        "Keep important faces and weapons clear of the lower caption area, "
+        "but draw a continuous detailed environment to every edge. "
+        "No blank bands, solid-color margins, or empty gray space."
     )
 
 

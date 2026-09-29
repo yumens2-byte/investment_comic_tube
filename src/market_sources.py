@@ -10,7 +10,7 @@
 실측 커버리지 (2026-09-01 마스터 계정 직접 호출 검증):
   FMP 무료   : ^VIX / ^GSPC / ^IXIC 가능, ^TNX / DX-Y.NYB 는 ACCESS DENIED
   AlphaVantage 무료 : TREASURY_YIELD 가능, 인덱스 데이터는 미제공
-  FRED       : 전 지표 커버 가능하나 T+1 지연
+  FRED       : 일부 지표의 지연된 관측값. DXY와 정의가 다른 달러 지표는 대입하지 않는다.
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ FRED_SERIES = {
     "VIX": "VIXCLS",
     "SPX": "SP500",
     "NASDAQ": "NASDAQCOM",
-    "DXY": "DTWEXBGS",
 }
 STOOQ_SYMBOLS = {"SPX": "^spx", "NASDAQ": "^ndq", "VIX": "^vix", "DXY": "^dxy"}
 
@@ -41,19 +40,17 @@ FALLBACK_ORDER = {
     "VIX": ["fmp", "fred", "stooq"],
     "SPX": ["fmp", "fred", "stooq"],
     "NASDAQ": ["fmp", "fred", "stooq"],
-    "DXY": ["fred", "stooq"],
+    "DXY": ["stooq"],
     "GOLD": ["stooq"],
     "OIL": ["stooq"],
 }
 
 
 def _metric(close: float, prev_close: float | None, source: str) -> dict:
-    change_pct = 0.0
-    if prev_close:
-        change_pct = (close - prev_close) / prev_close * 100
+    change_pct = (close - prev_close) / prev_close * 100 if prev_close else None
     return {
         "close": round(float(close), 2),
-        "change_pct": round(float(change_pct), 2),
+        "change_pct": round(float(change_pct), 2) if change_pct is not None else None,
         "sma20": None,
         "dev_pct": None,
         "source": source,

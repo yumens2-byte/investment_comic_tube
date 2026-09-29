@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 
 from src.market_sources import (
     FALLBACK_ORDER,
+    FRED_SERIES,
+    _metric,
     _fetch_alphavantage,
     _fetch_fmp,
     _fetch_fred,
@@ -22,6 +24,13 @@ def _resp(json_data=None, text=None):
 
 
 class FallbackOrderTest(unittest.TestCase):
+    def test_dxy_does_not_use_different_fred_dollar_index(self):
+        self.assertNotIn("DXY", FRED_SERIES)
+        self.assertNotIn("fred", FALLBACK_ORDER["DXY"])
+
+    def test_missing_previous_close_is_unknown_not_zero_change(self):
+        self.assertIsNone(_metric(102.0, None, "stooq")["change_pct"])
+
     def test_every_required_indicator_has_a_fallback(self):
         for indicator in ("TNX", "VIX", "NASDAQ", "SPX", "DXY"):
             self.assertTrue(FALLBACK_ORDER.get(indicator), f"{indicator} 폴백 없음")
@@ -93,7 +102,7 @@ class FetcherTest(unittest.TestCase):
             {"date": "2026-08-30", "value": "103.0"},
         ]})
 
-        result = _fetch_fred("DXY")
+        result = _fetch_fred("SPX")
 
         self.assertEqual(result["close"], 103.5)
         self.assertEqual(result["source"], "fred")

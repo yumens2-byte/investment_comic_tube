@@ -2,7 +2,12 @@ import logging
 import sys
 
 from src.collector import fetch_market_data
-from src.content_quality import VERSION as QUALITY_VERSION, validate_media_package, validate_rendered_video
+from src.content_quality import (
+    VERSION as QUALITY_VERSION,
+    validate_image_assets,
+    validate_media_package,
+    validate_rendered_video,
+)
 from src.director import generate_connected_script
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
@@ -109,6 +114,7 @@ def main(*, video_pilot: bool = False) -> int:
         )
         if image_degraded:
             degraded.append(image_degraded)
+        validate_image_assets(image_paths)
         if not video_pilot:
             record_step_finish(
                 step,

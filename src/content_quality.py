@@ -7,9 +7,11 @@ import math
 import subprocess
 from pathlib import Path
 
+from PIL import Image, ImageStat, UnidentifiedImageError
+
 from src.validation import ValidationError
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 EXPECTED_IMAGE_SLOTS = 4
 EXPECTED_NARRATIONS = 6
 
@@ -35,6 +37,31 @@ def validate_media_package(image_paths: list[str | None], audio_paths: list[str 
         raise ContentQualityError(
             f"내레이션 {EXPECTED_NARRATIONS}개가 모두 생성되지 않았다"
         )
+
+
+def validate_image_assets(image_paths: list[str | None]) -> None:
+    """손상·가로 이미지와 파일럿에서 관찰된 하단 회색 빈 띠를 차단한다."""
+    if len(image_paths) != EXPECTED_IMAGE_SLOTS or any(not path for path in image_paths):
+        raise ContentQualityError("필수 이미지 슬롯이 누락됐다")
+    for index, path in enumerate(image_paths):
+        try:
+            with Image.open(path) as image:
+                image.load()
+                width, height = image.size
+                if width < 512 or height < 900 or abs(width / height - 9 / 16) > 0.045:
+                    raise ContentQualityError(f"scene_{index} 세로 이미지 규격 오류")
+                rgb = image.convert("RGB")
+                flat_bands = 0
+                for fraction in (0.80, 0.85, 0.90, 0.95):
+                    y = int(height * fraction)
+                    sample = rgb.crop((0, y, width, min(height, y + 10)))
+                    stats = ImageStat.Stat(sample)
+                    if sum(stats.stddev) / 3 < 12 and max(stats.mean) - min(stats.mean) < 20:
+                        flat_bands += 1
+                if flat_bands >= 3:
+                    raise ContentQualityError(f"scene_{index} 하단 빈 단색 영역 감지")
+        except (OSError, UnidentifiedImageError) as exc:
+            raise ContentQualityError(f"scene_{index} 이미지 파일을 읽을 수 없다") from exc
 
 
 def validate_rendered_video(path: str) -> None:

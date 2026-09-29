@@ -201,7 +201,8 @@ class StepFailureRecordingTest(unittest.TestCase):
                            ("HOOK", "THREAT", "IMPACT", "HERO", "CLASH", "LESSON")],
             "degraded_reason": None,
         }
-        with tempfile.TemporaryDirectory() as d, patch.dict("os.environ", {"LOG_DIR": d}):
+        with tempfile.TemporaryDirectory() as d, patch.dict("os.environ", {"LOG_DIR": d}), \
+             patch("main.validate_image_assets"):
             self.assertEqual(main.main(), 1)
 
         # Ep.1 의 upload 가 'running' 으로 영구 방치되던 문제
