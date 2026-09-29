@@ -76,7 +76,8 @@ def build_goc_script(event: dict) -> dict:
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise ValidationError("GOC 대본 API 키 없음")
-    response = genai.Client(api_key=key).models.generate_content(
+    client = genai.Client(api_key=key)
+    response = client.models.generate_content(
         model="gemini-3.6-flash", contents=prompt)
     try:
         narrations = json.loads((response.text or "").strip())
