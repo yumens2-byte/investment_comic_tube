@@ -19,6 +19,7 @@ on:
         default: video-pilot
         options:
           - video-pilot
+          - goc-video-pilot
           - full
 
 jobs:
@@ -80,6 +81,18 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd)
           python main.py
+
+      - name: Run GOC production-path pilot
+        if: github.event_name == 'workflow_dispatch' && inputs.mode == 'goc-video-pilot'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          LOG_DIR: logs
+          ARTIFACT_DIR: artifacts
+        run: |
+          export PYTHONPATH=$(pwd)
+          python main.py --goc-video-pilot
 
       - name: Upload pipeline diagnostics
         if: always()

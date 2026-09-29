@@ -32,9 +32,9 @@ DEFAULT_IMAGE_COUNT = int(os.getenv("IMAGE_COUNT", "3"))
 REFERENCE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
 
 
-def _load_reference_images() -> list[tuple[bytes, str]]:
+def _load_reference_images(reference_dir: str | None = None) -> list[tuple[bytes, str]]:
     """레퍼런스 이미지를 (바이트, mime) 목록으로 읽는다. 없으면 빈 목록."""
-    ref_dir = Path(os.getenv("REFERENCE_DIR", "assets/reference"))
+    ref_dir = Path(reference_dir or os.getenv("REFERENCE_DIR", "assets/reference"))
     if not ref_dir.is_dir():
         return []
 
@@ -59,18 +59,28 @@ def _build_prompt(script_data: dict, scene: str | None = None, has_reference: bo
         if scene
         else f"The tiger hero confronts {villain} in a dramatic market battle scene. "
     )
+    if script_data.get("track") == "GOC":
+        hero = (
+            "Guardian of Capital (GOC), the capital-protection heroine. "
+            "Use the supplied reference as the exact design: human face and human ears, long blonde hair, "
+            "blue eyes, ornate white-and-gold armor, large white feathered wings, and dark red cape. "
+            "Preserve the reference's equipment and left/right arrangement; do not invent a weapon."
+        )
+        scene_line = f"Scene to depict from GOC's protective perspective: {scene or 'GOC assesses market risk.'} "
+    else:
+        hero = HERO_APPEARANCE
     return (
         "Vertical 9:16 comic-style illustration for a financial-market story "
         "called 'EDT Universe'. "
-        f"{HERO_APPEARANCE} "
+        f"{hero} "
         f"{get_villain_appearance(villain)} "
         f"{scene_line}"
         f"Theme: {theme}. "
         "Keep the art style, character designs and colour palette perfectly consistent "
         "with the described characters across every scene. "
         + (
-            "Use the provided reference image(s) as the definitive look of the hero EDT: "
-            "match his face, fur pattern, suit and chainsaw exactly. "
+            ("Use the provided reference as the definitive look of GOC. " if script_data.get("track") == "GOC" else
+             "Use the provided reference image(s) as the definitive look of the hero EDT: match his face, fur pattern, suit and chainsaw exactly. ")
             if has_reference
             else ""
         )
@@ -125,7 +135,13 @@ def generate_scene_images(
     from google.genai import types
 
     client = genai.Client(api_key=api_key)
-    references = _load_reference_images()
+    if script_data.get("track") == "GOC":
+        ref_dir = Path(os.getenv("GOC_REFERENCE_DIR", "assets/reference/goc"))
+        references = _load_reference_images(str(ref_dir))
+        if not references:
+            raise ValueError(f"GOC reference image required: {ref_dir}")
+    else:
+        references = _load_reference_images()
     if references:
         logger.info("reference_images_loaded count=%s", len(references))
 
