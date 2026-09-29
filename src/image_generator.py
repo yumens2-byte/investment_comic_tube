@@ -111,6 +111,8 @@ def generate_scene_images(
     output_dir: str = "artifacts/images",
     scenes: list[str] | None = None,
     count: int = 2,
+    model_name: str | None = None,
+    image_size: str | None = None,
 ) -> tuple[list[str | None], str | None]:
     """비트별 장면 이미지를 생성해 (경로 목록, 실패 사유) 를 반환한다.
 
@@ -134,7 +136,9 @@ def generate_scene_images(
 
     from google.genai import types
 
-    client = genai.Client(api_key=api_key)
+    client = (genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(attempts=1))) if model_name else
+        genai.Client(api_key=api_key))
     if script_data.get("track") == "GOC":
         ref_dir = Path(os.getenv("GOC_REFERENCE_DIR", "assets/reference/goc"))
         references = _load_reference_images(str(ref_dir))
@@ -158,7 +162,11 @@ def generate_scene_images(
         ]
         contents.append(prompt)
         try:
-            response = client.models.generate_content(model=IMAGE_MODEL, contents=contents)
+            kwargs = {"model": model_name or IMAGE_MODEL, "contents": contents}
+            if image_size:
+                kwargs["config"] = types.GenerateContentConfig(response_modalities=["IMAGE"],
+                    image_config=types.ImageConfig(aspect_ratio="9:16", image_size=image_size))
+            response = client.models.generate_content(**kwargs)
             image_bytes = _extract_image_bytes(response)
         except Exception as e:  # noqa: BLE001 - 외부 API 실패는 렌더링 폴백으로 흡수
             last_error = f"{type(e).__name__}"
@@ -183,7 +191,7 @@ def generate_scene_images(
         paths.append(str(path))
 
     ok_count = sum(1 for p in paths if p)
-    logger.info("image_generation_finished count=%s total=%s model=%s", ok_count, total, IMAGE_MODEL)
+    logger.info("image_generation_finished count=%s total=%s model=%s", ok_count, total, model_name or IMAGE_MODEL)
 
     if ok_count == 0:
         return paths, f"image:{last_error or 'unknown'}"

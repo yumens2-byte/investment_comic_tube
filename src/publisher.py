@@ -206,7 +206,8 @@ def build_title(metadata: dict) -> str:
     signal = _primary_signal(metadata)
     theme = str(metadata.get("theme") or "시장 브리핑").strip()
     episode = metadata.get("episode", "-")
-    return f"{signal}, {theme} | EDT 투자코믹 Ep.{episode} #Shorts"[:100]
+    hero = "GOC" if metadata.get("track") == "GOC" else "EDT"
+    return f"{signal}, {theme} | {hero} 투자코믹 Ep.{episode} #Shorts"[:100]
 
 
 def build_social_post(metadata: dict, max_length: int = 280) -> str:
@@ -234,6 +235,7 @@ def build_description(metadata: dict) -> str:
     episode = metadata.get("episode")
     theme = metadata.get("theme")
     villain = metadata.get("villain")
+    hero = "GOC" if metadata.get("track") == "GOC" else "EDT"
 
     storyboard = metadata.get("storyboard") or []
     narrations = [
@@ -244,7 +246,7 @@ def build_description(metadata: dict) -> str:
     takeaway = narrations[-1] if len(narrations) > 1 else "시장보다 먼저 원칙을 점검하세요."
     blocks = [
         f"{hook}\n\n오늘의 핵심 신호는 {_primary_signal(metadata)}입니다. "
-        "EDT와 함께 시장의 위험과 대응 원칙을 확인하세요.",
+        f"{hero}와 함께 시장의 위험과 대응 원칙을 확인하세요.",
     ]
 
     market = _format_market_block(metadata.get("market_snapshot"))
@@ -254,7 +256,8 @@ def build_description(metadata: dict) -> str:
     blocks.append(f"🎯 오늘의 한 줄\n{takeaway}")
 
     blocks.append(
-        f"🐯 EDT Universe Ep.{episode} · {theme}\n"
+        (f"🪽 EDT Universe · GOC Ep.{episode} · {theme}\n" if hero == "GOC" else
+         f"🐯 EDT Universe Ep.{episode} · {theme}\n") +
         "본 콘텐츠는 정보 제공 및 교육 목적이며, 특정 종목의 매수·매도를 권유하지 않습니다."
     )
 
@@ -418,7 +421,7 @@ def upload_to_youtube(video_path, metadata, *, youtube_service=_YOUTUBE_SERVICE_
             "categoryId": "27"
         },
         "status": {
-            "privacyStatus": os.getenv("YOUTUBE_DEFAULT_PRIVACY", "private"),
+            "privacyStatus": metadata.get("privacy") or os.getenv("YOUTUBE_DEFAULT_PRIVACY", "private"),
             "selfDeclaredMadeForKids": False,
         }
     }

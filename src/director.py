@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import datetime, timezone
 
 from src.drive_manager import (
     fetch_latest_episode_state,
@@ -17,7 +18,8 @@ from src.drive_manager import (
 )
 from src.market_regime import select_villain
 from src.quota import is_quota_exhausted
-from src.story import build_storyboard
+from src.story import build_storyboard, build_story_state
+from src.goc import build_goc_script
 
 logger = logging.getLogger(__name__)
 
@@ -60,7 +62,9 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
     return polished, None
 
 
-def generate_connected_script(market_data: dict, *, persist: bool = True) -> dict:
+def generate_connected_script(market_data: dict, *, persist: bool = True, track: str = "EDT") -> dict:
+    if track not in ("EDT", "GOC"):
+        raise ValueError("unknown hero track")
     logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
     prev_state["recent_cliffhangers"] = fetch_recent_cliffhangers(limit=3)
@@ -69,12 +73,23 @@ def generate_connected_script(market_data: dict, *, persist: bool = True) -> dic
     # 고정 임계값 대신 복합 스코어로 판정한다 (빌런 고착 방지)
     villain, theme, scores = select_villain(market_data, prev_state)
 
-    base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
-    narration, degraded_reason = _polish_narration(base_narration)
-
-    storyboard, story_state, story_degraded = build_storyboard(
-        market_data, villain, theme, prev_state
-    )
+    if track == "GOC":
+        goc = build_goc_script({"episode_no": next_ep, "villain": villain,
+                               "market_snapshot": market_data,
+                               "market_as_of": datetime.now(timezone.utc).isoformat()})
+        storyboard = goc["storyboard"]
+        narration = storyboard[0]["narration"]
+        story_state = build_story_state(villain, prev_state,
+                                       [beat["narration"] for beat in storyboard])
+        theme = goc["theme"]
+        degraded_reason = story_degraded = None
+    else:
+        base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
+        narration, degraded_reason = _polish_narration(base_narration)
+        storyboard, story_state, story_degraded = build_storyboard(
+            market_data, villain, theme, prev_state
+        )
+    story_state["track"] = track
     degraded_reasons = [r for r in (degraded_reason, story_degraded) if r]
 
     # 시장 수치를 그대로 보관해 다음 회차가 전일 대비 서사를 만들 수 있게 한다
@@ -82,6 +97,8 @@ def generate_connected_script(market_data: dict, *, persist: bool = True) -> dic
     market_snapshot["_villain_scores"] = scores
 
     script_data = {
+        "track": track,
+        "privacy": "private",
         "episode": next_ep,
         "villain": villain,
         "theme": theme,
