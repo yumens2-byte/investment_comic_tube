@@ -30,12 +30,20 @@ DEFAULT_STATE = {
 PUBLISHED_STATUSES = ["published", "published_degraded"]
 
 
+class EpisodeStateUnavailable(RuntimeError):
+    """발행 여부나 다음 회차를 안전하게 판단할 수 없다."""
+
+
+class EpisodeUpdateConflict(RuntimeError):
+    """상태 갱신 대상이 정확히 한 건이 아니다."""
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
 def fetch_latest_episode_state() -> dict:
-    """가장 최근 에피소드 상태를 조회한다. 실패/데이터 없음 시 안전 기본값 반환."""
+    """가장 최근 발행 상태를 조회한다. 빈 테이블에서만 기본값을 반환한다."""
     logger.info("episode_state_fetch_started backend=supabase")
     try:
         client = get_client()
@@ -49,9 +57,9 @@ def fetch_latest_episode_state() -> dict:
             .limit(1)
             .execute()
         )
-    except Exception as e:  # noqa: BLE001 - 조회 실패는 안전 기본값으로 폴백
-        logger.warning("episode_state_fetch_failed reason=%s: %s -- using default", type(e).__name__, e)
-        return dict(DEFAULT_STATE)
+    except Exception as e:  # noqa: BLE001 - 조회 실패 시 번호 재사용 방지
+        logger.error("episode_state_fetch_failed reason=%s", type(e).__name__)
+        raise EpisodeStateUnavailable("최근 발행 회차 조회 실패") from e
 
     rows = result.data or []
     if not rows:
@@ -142,7 +150,10 @@ def update_episode(episode_id: str, **fields) -> None:
 
     logger.info("episode_update_started id=%s fields=%s", episode_id, list(fields.keys()))
     client = get_client()
-    client.table("episodes").update(payload).eq("id", episode_id).execute()
+    result = client.table("episodes").update(payload).eq("id", episode_id).select("id").execute()
+    rows = result.data or []
+    if len(rows) != 1 or rows[0].get("id") != episode_id:
+        raise EpisodeUpdateConflict(f"episode update affected {len(rows)} rows: {episode_id}")
     logger.info("episode_update_finished id=%s status=%s", episode_id, fields.get("status"))
 
 
@@ -190,8 +201,7 @@ def has_published_today() -> bool:
 
     같은 날 재실행하면 동일 시세를 받아 사실상 같은 이야기가 두 번 생성된다
     (Ep.1/Ep.2 가 31분 간격으로 완전히 같은 시장 데이터를 가진 사례).
-    조회 실패 시 False 를 돌려 파이프라인을 막지 않는다 -- 중복 방지는
-    보조 안전장치이지 발행의 전제조건은 아니다.
+    조회 실패 시 중복 여부를 판단할 수 없으므로 파이프라인을 중단한다.
     """
     today = datetime.now(timezone.utc).date().isoformat()
     try:
@@ -205,8 +215,8 @@ def has_published_today() -> bool:
             .execute()
         )
     except Exception as e:  # noqa: BLE001
-        logger.warning("published_today_check_failed reason=%s: %s", type(e).__name__, e)
-        return False
+        logger.error("published_today_check_failed reason=%s", type(e).__name__)
+        raise EpisodeStateUnavailable("당일 발행 여부 조회 실패") from e
 
     rows = result.data or []
     if rows:

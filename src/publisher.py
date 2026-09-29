@@ -222,7 +222,7 @@ def build_social_post(metadata: dict, max_length: int = 280) -> str:
     )
     # X에서는 발견성보다 가독성을 우선해 핵심 태그 3개만 쓴다.
     suffix = " ".join(tags[:3])
-    body = f"{hook}\n\n핵심 신호: {_primary_signal(metadata)}\n30초 투자 코믹으로 확인하세요.\n\n{suffix}"
+    body = f"{hook}\n\n핵심 신호: {_primary_signal(metadata)}\n투자 코믹으로 확인하세요.\n\n{suffix}"
     if len(body) <= max_length:
         return body
     budget = max(1, max_length - len(body) + len(hook) - 1)
@@ -244,7 +244,7 @@ def build_description(metadata: dict) -> str:
     takeaway = narrations[-1] if len(narrations) > 1 else "시장보다 먼저 원칙을 점검하세요."
     blocks = [
         f"{hook}\n\n오늘의 핵심 신호는 {_primary_signal(metadata)}입니다. "
-        "EDT와 함께 30초 안에 시장의 위험과 대응 원칙을 확인하세요.",
+        "EDT와 함께 시장의 위험과 대응 원칙을 확인하세요.",
     ]
 
     market = _format_market_block(metadata.get("market_snapshot"))

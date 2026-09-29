@@ -1,6 +1,7 @@
 import logging
 
 from src.collector import fetch_market_data
+from src.content_quality import VERSION as QUALITY_VERSION, validate_media_package
 from src.director import generate_connected_script
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
@@ -63,7 +64,7 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
 
 def main() -> int:
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s", log_path)
+    logger.info("pipeline_started log_file=%s quality_gate=%s", log_path, QUALITY_VERSION)
 
     episode_id = None
     video_id = None
@@ -124,9 +125,13 @@ def main() -> int:
         )
         current_step = None
 
+        # 품질 저하를 기록만 하고 게시하면 텍스트 카드/무음 회차가 공개될 수 있다.
+        # 필수 미디어가 빠졌으면 렌더링 및 업로드를 진행하지 않는다.
+        validate_media_package(image_paths, audio_paths)
+
         step = current_step = record_step_start(episode_id, "render")
         scenes = _build_scenes(storyboard, image_paths, audio_paths)
-        video_file = render_video(script_data, scenes=scenes or None)
+        video_file = render_video(script_data, scenes=scenes, require_storyboard=True)
         update_episode(episode_id, status="rendered", video_path=video_file)
         record_step_finish(step, "success")
         current_step = None

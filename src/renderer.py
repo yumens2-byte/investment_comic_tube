@@ -777,6 +777,8 @@ def render_video(
     script_data: dict,
     image_paths: list[str] | None = None,
     scenes: list[dict] | None = None,
+    *,
+    require_storyboard: bool = False,
 ) -> str:
     output_path = "output_short.mp4"
     if os.path.exists(output_path):
@@ -788,6 +790,8 @@ def render_video(
         mode = "slideshow"
     else:
         mode = "text_card"
+    if require_storyboard and mode != "storyboard":
+        raise ValueError("production render requires complete storyboard scenes")
     logger.info("render_started output=%s mode=%s", output_path, mode)
 
     log_dir = Path(os.getenv("LOG_DIR", "logs"))
@@ -798,6 +802,8 @@ def render_video(
         try:
             _render_storyboard(scenes, output_path, ffmpeg_log)
         except Exception as e:  # noqa: BLE001 - 스토리보드 실패는 텍스트카드로 폴백
+            if require_storyboard:
+                raise RuntimeError("storyboard render failed; text card upload blocked") from e
             logger.warning(
                 "storyboard_render_failed reason=%s: %s -- falling back to text_card",
                 type(e).__name__, e,

@@ -64,6 +64,11 @@ class BuildScenesTest(unittest.TestCase):
 
 
 class PipelineOrchestrationTest(unittest.TestCase):
+    def setUp(self):
+        self.duplicate_check = patch("main.validate_not_published_today")
+        self.duplicate_check.start()
+        self.addCleanup(self.duplicate_check.stop)
+
     def tearDown(self):
         for handler in logging.getLogger().handlers[:]:
             handler.close()
@@ -140,21 +145,17 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.generate_scene_images", return_value=([None] * 4, "image:no_api_key"))
     @patch("main.generate_connected_script", return_value=SCRIPT_DEGRADED)
     @patch("main.fetch_market_data", return_value=MARKET)
-    def test_all_ai_steps_degraded_marks_published_degraded(
+    def test_missing_media_aborts_before_render_and_upload(
         self, _fetch, _script, _images, _tts, render, _upload, update_episode, _start, _finish
     ):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
             exit_code = main.main()
 
-        self.assertEqual(exit_code, 0)
-        # 이미지가 하나도 없으므로 scenes=None -> 렌더러가 텍스트카드로 폴백
-        self.assertIsNone(render.call_args.kwargs["scenes"])
+        self.assertEqual(exit_code, 1)
+        render.assert_not_called()
+        _upload.assert_not_called()
         final = update_episode.call_args_list[-1]
-        self.assertEqual(final.kwargs["status"], "published_degraded")
-        self.assertEqual(
-            final.kwargs["degraded_reason"],
-            "story:RuntimeError;image:no_api_key;tts:no_api_key",
-        )
+        self.assertEqual(final.kwargs["status"], "aborted_validation")
 
     @patch("main.record_step_finish")
     @patch("main.record_step_start", return_value="step-run-1")
@@ -165,19 +166,17 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.generate_scene_images", return_value=(IMAGES4, None))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
-    def test_partial_tts_still_renders_all_scenes(
+    def test_partial_tts_aborts_before_render(
         self, _fetch, _script, _images, _tts, render, _upload, update_episode, _start, _finish
     ):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
             exit_code = main.main()
 
-        self.assertEqual(exit_code, 0)
-        scenes = render.call_args.kwargs["scenes"]
-        self.assertEqual(len(scenes), 6)
-        self.assertEqual(scenes[0]["audio"], "a0.wav")
-        self.assertIsNone(scenes[1]["audio"])
+        self.assertEqual(exit_code, 1)
+        render.assert_not_called()
+        _upload.assert_not_called()
         final = update_episode.call_args_list[-1]
-        self.assertEqual(final.kwargs["status"], "published_degraded")
+        self.assertEqual(final.kwargs["status"], "aborted_validation")
 
     @patch("main.record_step_finish")
     @patch("main.record_step_start", return_value="step-run-1")
@@ -201,11 +200,11 @@ class PipelineOrchestrationTest(unittest.TestCase):
     @patch("main.record_step_start", return_value="step-run-1")
     @patch("main.update_episode")
     @patch("main.render_video", side_effect=RuntimeError("ffmpeg exploded"))
-    @patch("main.synthesize_narrations", return_value=([None] * 6, "tts:no_api_key"))
-    @patch("main.generate_scene_images", return_value=([None] * 4, "image:no_api_key"))
+    @patch("main.synthesize_narrations", return_value=(AUDIO6, None))
+    @patch("main.generate_scene_images", return_value=(IMAGES4, None))
     @patch("main.generate_connected_script", return_value=SCRIPT_OK)
     @patch("main.fetch_market_data", return_value=MARKET)
-    def test_render_failure_marks_episode_failed_with_reasons(
+    def test_render_failure_marks_episode_failed(
         self, _fetch, _script, _images, _tts, _render, update_episode, _start, _finish
     ):
         with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
@@ -215,7 +214,7 @@ class PipelineOrchestrationTest(unittest.TestCase):
         update_episode.assert_called_once_with(
             "ep-0103-abcd1234",
             status="failed",
-            degraded_reason="image:no_api_key;tts:no_api_key",
+            degraded_reason=None,
         )
 
 
@@ -224,10 +223,24 @@ if __name__ == "__main__":
 
 
 class ValidationAbortTest(unittest.TestCase):
+    def setUp(self):
+        self.duplicate_check = patch("main.validate_not_published_today")
+        self.duplicate_check.start()
+        self.addCleanup(self.duplicate_check.stop)
+
     def tearDown(self):
         for handler in logging.getLogger().handlers[:]:
             handler.close()
             logging.getLogger().removeHandler(handler)
+
+    @patch("main.fetch_market_data")
+    @patch("main.get_youtube_service")
+    @patch("main.validate_not_published_today", side_effect=RuntimeError("db down"))
+    def test_duplicate_check_outage_aborts_before_paid_work(self, _check, youtube, fetch):
+        with tempfile.TemporaryDirectory() as directory, patch.dict("os.environ", {"LOG_DIR": directory}):
+            self.assertEqual(main.main(), 1)
+        youtube.assert_not_called()
+        fetch.assert_not_called()
 
     @patch("main.generate_connected_script")
     @patch("main.fetch_market_data", return_value={"TNX": {"close": None, "change_pct": None}})

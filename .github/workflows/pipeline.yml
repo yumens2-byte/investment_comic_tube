@@ -1,5 +1,12 @@
 name: EDT Market Shorts Production Pipeline
 
+permissions:
+  contents: read
+
+concurrency:
+  group: edt-market-shorts-production
+  cancel-in-progress: false
+
 on:
   schedule:
     - cron: '0 0 * * *' # 매일 KST 오전 9시 (UTC 00:00)
@@ -17,6 +24,7 @@ on:
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4

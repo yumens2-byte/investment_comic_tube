@@ -124,9 +124,9 @@ class DuplicatePublishTest(unittest.TestCase):
         self.assertFalse(drive_manager.has_published_today())
 
     @patch("src.drive_manager.get_client", side_effect=RuntimeError("db down"))
-    def test_db_failure_does_not_block(self, _gc):
-        # 중복 방지는 보조 장치이므로 조회 실패가 발행을 막으면 안 된다
-        self.assertFalse(drive_manager.has_published_today())
+    def test_db_failure_blocks(self, _gc):
+        with self.assertRaises(drive_manager.EpisodeStateUnavailable):
+            drive_manager.has_published_today()
 
     @patch("src.drive_manager.has_published_today", return_value=True)
     def test_validation_aborts_when_already_published(self, _hp):
@@ -186,8 +186,8 @@ class StepFailureRecordingTest(unittest.TestCase):
     @patch("main.record_step_start", return_value="step-render")
     @patch("main.update_episode")
     @patch("main.render_video", side_effect=RuntimeError("ffmpeg exploded"))
-    @patch("main.synthesize_narrations", return_value=([None] * 6, "tts:no_api_key"))
-    @patch("main.generate_scene_images", return_value=([None] * 4, "image:no_api_key"))
+    @patch("main.synthesize_narrations", return_value=([f"a{i}.wav" for i in range(6)], None))
+    @patch("main.generate_scene_images", return_value=([f"i{i}.png" for i in range(4)], None))
     @patch("main.generate_connected_script")
     @patch("main.fetch_market_data")
     def test_running_step_marked_failed_on_crash(

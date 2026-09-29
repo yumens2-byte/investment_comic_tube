@@ -34,12 +34,10 @@ class FetchLatestEpisodeStateTest(unittest.TestCase):
         self.assertEqual(state, drive_manager.DEFAULT_STATE)
 
     @patch("src.drive_manager.get_client")
-    def test_db_failure_returns_default(self, get_client):
+    def test_db_failure_aborts_numbering(self, get_client):
         get_client.side_effect = RuntimeError("no credentials")
-
-        state = drive_manager.fetch_latest_episode_state()
-
-        self.assertEqual(state, drive_manager.DEFAULT_STATE)
+        with self.assertRaises(drive_manager.EpisodeStateUnavailable):
+            drive_manager.fetch_latest_episode_state()
 
 
 class StartEpisodeTest(unittest.TestCase):
@@ -63,6 +61,9 @@ class UpdateEpisodeTest(unittest.TestCase):
     def test_update_sends_fields_with_updated_at(self, get_client):
         client = MagicMock()
         get_client.return_value = client
+        client.table.return_value.update.return_value.eq.return_value.select.return_value.execute.return_value.data = [
+            {"id": "ep-0103-abcd1234"}
+        ]
 
         drive_manager.update_episode("ep-0103-abcd1234", status="published", youtube_video_id="abc123")
 
@@ -71,6 +72,25 @@ class UpdateEpisodeTest(unittest.TestCase):
         self.assertEqual(update_call["youtube_video_id"], "abc123")
         self.assertIn("updated_at", update_call)
         client.table.return_value.update.return_value.eq.assert_called_once_with("id", "ep-0103-abcd1234")
+        client.table.return_value.update.return_value.eq.return_value.select.assert_called_once_with("id")
+
+    @patch("src.drive_manager.get_client")
+    def test_update_without_matching_row_raises(self, get_client):
+        client = MagicMock()
+        get_client.return_value = client
+        client.table.return_value.update.return_value.eq.return_value.select.return_value.execute.return_value.data = []
+        with self.assertRaises(drive_manager.EpisodeUpdateConflict):
+            drive_manager.update_episode("missing", status="published")
+
+    @patch("src.drive_manager.get_client")
+    def test_update_with_unexpected_row_raises(self, get_client):
+        client = MagicMock()
+        get_client.return_value = client
+        client.table.return_value.update.return_value.eq.return_value.select.return_value.execute.return_value.data = [
+            {"id": "different"}
+        ]
+        with self.assertRaises(drive_manager.EpisodeUpdateConflict):
+            drive_manager.update_episode("target", status="published")
 
     @patch("src.drive_manager.get_client")
     def test_no_fields_is_noop(self, get_client):
@@ -133,12 +153,10 @@ class EpisodeNumberingTest(unittest.TestCase):
         self.assertEqual(state["episode"] + 1, 1)
 
     @patch("src.drive_manager.get_client")
-    def test_db_failure_also_yields_episode_one(self, get_client):
+    def test_db_failure_blocks_episode_numbering(self, get_client):
         get_client.side_effect = RuntimeError("db down")
-
-        state = drive_manager.fetch_latest_episode_state()
-
-        self.assertEqual(state["episode"] + 1, 1)
+        with self.assertRaises(drive_manager.EpisodeStateUnavailable):
+            drive_manager.fetch_latest_episode_state()
 
     @patch("src.drive_manager.get_client")
     def test_episode_id_is_zero_padded_for_single_digit(self, get_client):
