@@ -56,6 +56,7 @@ def synthesize_narrations(
     narrations: list[str],
     output_dir: str = "artifacts/audio",
     tones: list[str | None] | None = None,
+    voice_name: str | None = None,
 ) -> tuple[list[str | None], str | None]:
     """내레이션 문장들을 음성 파일로 합성한다.
 
@@ -82,7 +83,7 @@ def synthesize_narrations(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
             voice_config=types.VoiceConfig(
-                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=TTS_VOICE)
+                prebuilt_voice_config=types.PrebuiltVoiceConfig(voice_name=voice_name or TTS_VOICE)
             )
         ),
     )

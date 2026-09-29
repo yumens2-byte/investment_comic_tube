@@ -11,6 +11,7 @@ from src.content_quality import (
 from src.director import generate_connected_script
 from src.drive_manager import record_step_finish, record_step_start, update_episode
 from src.image_generator import generate_scene_images
+from src.goc import GOC_IMAGE_SLOTS, GOC_VOICE, build_goc_script, latest_edt_event
 from src.logging_config import configure_logging
 from src.publisher import get_youtube_service, upload_to_youtube
 from src.renderer import render_video
@@ -25,6 +26,32 @@ from src.validation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def goc_video_pilot() -> int:
+    """Generate GOC media from today's EDT event without DB writes or upload."""
+    configure_logging()
+    try:
+        validate_render_environment()
+        event = latest_edt_event()
+        validate_market_data(event["market_snapshot"])
+        script = build_goc_script(event)
+        storyboard = script["storyboard"]
+        validate_storyboard(storyboard)
+        images, _ = generate_scene_images(script, scenes=GOC_IMAGE_SLOTS)
+        validate_image_assets(images)
+        audio, _ = synthesize_narrations(
+            [beat["narration"] for beat in storyboard], voice_name=GOC_VOICE)
+        validate_media_package(images, audio)
+        video = render_video(script, scenes=_build_scenes(storyboard, images, audio),
+                             require_storyboard=True)
+        validate_rendered_video(video)
+        logger.info("goc_video_pilot_finished video=%s source_episode=%s upload=false db_write=false",
+                    video, event["episode_no"])
+        return 0
+    except Exception:
+        logger.exception("goc_video_pilot_failed")
+        return 1
 
 
 def _pick_image(image_paths: list, slot: int):
@@ -207,6 +234,7 @@ def main(*, video_pilot: bool = False) -> int:
 
 
 if __name__ == "__main__":
-    if sys.argv[1:] not in ([], ["--video-pilot"]):
-        raise SystemExit("usage: python main.py [--video-pilot]")
-    raise SystemExit(main(video_pilot="--video-pilot" in sys.argv[1:]))
+    if sys.argv[1:] not in ([], ["--video-pilot"], ["--goc-video-pilot"]):
+        raise SystemExit("usage: python main.py [--video-pilot|--goc-video-pilot]")
+    raise SystemExit(goc_video_pilot() if "--goc-video-pilot" in sys.argv[1:] else
+                     main(video_pilot="--video-pilot" in sys.argv[1:]))

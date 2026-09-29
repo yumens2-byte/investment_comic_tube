@@ -720,7 +720,8 @@ def _concat_segments(segment_paths: list[Path], output_path: str, tmp_dir: Path,
     _run_ffmpeg(cmd, ffmpeg_log, append=True)
 
 
-def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -> None:
+def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
+                       *, include_outro: bool = True) -> None:
     """스토리보드 장면 목록을 이어붙여 영상을 만든다.
 
     scenes 항목: {"image", "caption", "audio"}
@@ -778,11 +779,12 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path) -
 
     # 아웃트로는 실패해도 본편을 살린다(브랜딩은 부가 요소다)
     outro_path = tmp_dir / "segment_outro.mp4"
-    try:
-        if _render_outro_segment(outro_path, ffmpeg_log, append=True):
-            segment_paths.append(outro_path)
-    except Exception as e:  # noqa: BLE001
-        logger.warning("outro_render_failed reason=%s: %s -- 본편만 사용", type(e).__name__, e)
+    if include_outro:
+        try:
+            if _render_outro_segment(outro_path, ffmpeg_log, append=True):
+                segment_paths.append(outro_path)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("outro_render_failed reason=%s: %s -- 본편만 사용", type(e).__name__, e)
 
     _concat_segments(segment_paths, output_path, tmp_dir, ffmpeg_log)
 
@@ -833,7 +835,8 @@ def render_video(
 
     if mode == "storyboard":
         try:
-            _render_storyboard(scenes, output_path, ffmpeg_log)
+            _render_storyboard(scenes, output_path, ffmpeg_log,
+                               include_outro=script_data.get("track") != "GOC")
         except Exception as e:  # noqa: BLE001 - 스토리보드 실패는 텍스트카드로 폴백
             if require_storyboard:
                 raise RuntimeError("storyboard render failed; text card upload blocked") from e
