@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+
 import json
 import os
 from datetime import datetime
@@ -76,21 +78,39 @@ def build_goc_script(event: dict) -> dict:
         f"원본 시장 사건 기준 시각(ISO 8601): {event['market_as_of']}; "
         f"빌런: {event['villain']}; 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
     )
+    if current():
+        from src.market_facts import prompt_contract
+        prompt += prompt_contract()
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise ValidationError("GOC 대본 API 키 없음")
-    client = genai.Client(api_key=key)
+    client = (make_client(key) if current() else genai.Client(api_key=key))
     for attempt in range(2):
-        response = client.models.generate_content(
+        response = guarded_generate(client, "text", "goc",
             model="gemini-3.6-flash", contents=prompt)
         try:
             narrations = json.loads((response.text or "").strip())
         except (ValueError, AttributeError) as exc:
+            if current() and attempt == 0:
+                prompt += " JSON 불량. 문자열 6개 배열만 다시 작성."
+                continue
             raise ValidationError("GOC 대본 JSON 파싱 실패") from exc
         if not isinstance(narrations, list) or len(narrations) != 6 or not all(
             isinstance(line, str) and line.strip() for line in narrations
         ):
+            if current() and attempt == 0:
+                prompt += " 구조 불량. 비어 있지 않은 문자열 6개 배열만 다시 작성."
+                continue
             raise ValidationError("GOC 대본 6비트 불완전")
+        if current():
+            from src.market_facts import resolve
+            try:
+                narrations = [resolve(line, snapshot) for line in narrations]
+            except ValidationError:
+                if attempt == 1:
+                    raise
+                prompt += " 사실 검증 실패. 숫자·방향을 직접 쓰지 말고 등록 사실 토큰만 사용."
+                continue
         invalid = []
         for index, line in enumerate(narrations):
             try:

@@ -128,10 +128,16 @@ def _format_market_block(market_snapshot: dict | None) -> str:
             continue
         change = metric.get("change_pct")
         change_txt = ""
+        from src.pipeline_control import current
+        if current():
+            from src.market_facts import display
+            close_txt = display(close)
+        else:
+            close_txt = f"{close:,}"
         if isinstance(change, (int, float)):
             sign = "+" if change > 0 else ""
-            change_txt = f" ({sign}{change}%)"
-        lines.append(f"· {label} {close:,}{unit}{change_txt}")
+            change_txt = f" ({sign}{display(change) if current() else change}%)"
+        lines.append(f"· {label} {close_txt}{unit}{change_txt}")
 
     if not lines:
         return ""
@@ -198,6 +204,10 @@ def _primary_signal(metadata: dict) -> str:
     label = next(label for item, label, _unit in MARKET_LABELS if item == key)
     change = metric.get("change_pct")
     sign = "+" if change > 0 else ""
+    from src.pipeline_control import current
+    if current():
+        from src.market_facts import display
+        return f"{label} {sign}{display(change)}%"
     return f"{label} {sign}{change:.2f}%"
 
 
@@ -372,6 +382,12 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
             playlist_id = created.get("id")
             logger.info("playlist_created title=%s id=%s", title, playlist_id)
 
+        from src.pipeline_control import current
+        if current():
+            existing = youtube.playlistItems().list(part="id", playlistId=playlist_id,
+                                                    videoId=video_id, maxResults=1).execute()
+            if existing.get("items"):
+                return playlist_id
         youtube.playlistItems().insert(
             part="snippet",
             body={
@@ -425,6 +441,25 @@ def upload_to_youtube(video_path, metadata, *, youtube_service=_YOUTUBE_SERVICE_
             "selfDeclaredMadeForKids": False,
         }
     }
+
+    from src.pipeline_control import current
+    if current():
+        from src.upload_state import upload
+        # Persist recoverable metadata before initiating any upload session.
+        control = current()
+        state = control.upload()
+        if not state:
+            import hashlib
+            from pathlib import Path
+            control.upload({"state": "prepared", "metadata": metadata,
+                            "episode_id": metadata.get("episode_id"),
+                            "episode_status": "published_degraded" if metadata.get("degraded_reason") else "published",
+                            "sha256": hashlib.sha256(Path(video_path).read_bytes()).hexdigest(),
+                            "size": Path(video_path).stat().st_size})
+        video_id = upload(youtube, video_path, body, control, metadata.get("episode_id"))
+        set_thumbnail(youtube, video_id, metadata.get("thumbnail_source") or "artifacts/images/scene_0.png")
+        add_to_playlist(youtube, video_id)
+        return video_id
 
     media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=1024*1024)
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)

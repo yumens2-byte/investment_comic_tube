@@ -11,6 +11,8 @@ renderer는 빈 리스트를 받으면 텍스트카드로 자동 폴백하고,
 
 from __future__ import annotations
 
+from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+
 import logging
 import os
 from pathlib import Path
@@ -59,6 +61,8 @@ def _build_prompt(script_data: dict, scene: str | None = None, has_reference: bo
         if scene
         else f"The tiger hero confronts {villain} in a dramatic market battle scene. "
     )
+    if current():
+        client = make_client(api_key)
     if script_data.get("track") == "GOC":
         hero = (
             "Guardian of Capital (GOC), the capital-protection heroine. "
@@ -138,7 +142,7 @@ def generate_scene_images(
 
     client = (genai.Client(api_key=api_key, http_options=types.HttpOptions(
         retry_options=types.HttpRetryOptions(attempts=1))) if model_name else
-        genai.Client(api_key=api_key))
+        (make_client(api_key) if current() else genai.Client(api_key=api_key)))
     if script_data.get("track") == "GOC":
         ref_dir = Path(os.getenv("GOC_REFERENCE_DIR", "assets/reference/goc"))
         references = _load_reference_images(str(ref_dir))
@@ -156,6 +160,13 @@ def generate_scene_images(
     last_error: str | None = None
 
     for idx, scene in enumerate(scene_list):
+        from src.asset_store import restore, save
+        asset_inputs = {"script": script_data, "scene": scene, "model": model_name or IMAGE_MODEL,
+                        "size": image_size, "references": [__import__('hashlib').sha256(data).hexdigest() for data, _ in references]}
+        asset_path = out_dir / f"scene_{idx}.png"
+        if restore("image", idx, asset_inputs, asset_path):
+            paths.append(str(asset_path))
+            continue
         prompt = _build_prompt(script_data, scene, bool(references))
         contents: list = [
             types.Part.from_bytes(data=data, mime_type=mime) for data, mime in references
@@ -166,8 +177,10 @@ def generate_scene_images(
             if image_size:
                 kwargs["config"] = types.GenerateContentConfig(response_modalities=["IMAGE"],
                     image_config=types.ImageConfig(aspect_ratio="9:16", image_size=image_size))
-            response = client.models.generate_content(**kwargs)
+            response = guarded_generate(client, "image", idx,**kwargs)
             image_bytes = _extract_image_bytes(response)
+        except ControlError:
+            raise
         except Exception as e:  # noqa: BLE001 - 외부 API 실패는 렌더링 폴백으로 흡수
             last_error = f"{type(e).__name__}"
             logger.warning("image_generation_call_failed index=%s reason=%s: %s", idx, last_error, e)
@@ -188,6 +201,10 @@ def generate_scene_images(
 
         path = out_dir / f"scene_{idx}.png"
         path.write_bytes(image_bytes[0])
+        if current():
+            from src.content_quality import validate_image_assets
+            validate_image_assets([str(path)], expected_slots=1)
+        save("image", idx, asset_inputs, path)
         paths.append(str(path))
 
     ok_count = sum(1 for p in paths if p)

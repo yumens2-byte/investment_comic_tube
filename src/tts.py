@@ -9,6 +9,8 @@ API 미설정/실패 시 (None, 사유) 를 반환한다. renderer는 오디오�
 
 from __future__ import annotations
 
+from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+
 import logging
 import os
 import wave
@@ -82,7 +84,9 @@ def synthesize_narrations(
 
     client = (genai.Client(api_key=api_key, http_options=types.HttpOptions(
         retry_options=types.HttpRetryOptions(attempts=1))) if max_attempts == 1 else
-        genai.Client(api_key=api_key))
+        (make_client(api_key) if current() else genai.Client(api_key=api_key)))
+    if current():
+        client = make_client(api_key)
     config = types.GenerateContentConfig(
         response_modalities=["AUDIO"],
         speech_config=types.SpeechConfig(
@@ -96,6 +100,13 @@ def synthesize_narrations(
     last_error: str | None = None
 
     for idx, line in enumerate(narrations):
+        from src.asset_store import restore, save
+        asset_inputs = {"line": line, "tone": tones[idx] if tones and idx < len(tones) else None,
+                        "voice": voice_name or TTS_VOICE, "model": model_name or TTS_MODEL}
+        asset_path = out_dir / f"narration_{idx}.wav"
+        if restore("tts", idx, asset_inputs, asset_path):
+            paths.append(str(asset_path))
+            continue
         # 스타일 지시문이 그대로 낭독되지 않도록 낭독 구간을 명확히 분리한다
         tone = (tones[idx] if tones and idx < len(tones) and tones[idx] else DEFAULT_TONE)
         prompt = (
@@ -108,10 +119,12 @@ def synthesize_narrations(
         quota_hit = False
         for attempt in range(max_attempts if max_attempts is not None else TTS_MAX_ATTEMPTS):
             try:
-                response = client.models.generate_content(
+                response = guarded_generate(client, "tts", idx,
                     model=model_name or TTS_MODEL, contents=prompt, config=config
                 )
                 pcm = _extract_pcm(response)
+            except ControlError:
+                raise
             except Exception as e:  # noqa: BLE001 - 외부 API 실패는 무음 장면으로 폴백
                 last_error = f"{type(e).__name__}"
                 logger.warning(
@@ -144,6 +157,7 @@ def synthesize_narrations(
 
         path = out_dir / f"narration_{idx}.wav"
         _write_wave(path, pcm)
+        save("tts", idx, asset_inputs, path)
         paths.append(str(path))
 
     ok_count = sum(1 for p in paths if p)
