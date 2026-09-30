@@ -46,14 +46,17 @@ FALLBACK_ORDER = {
 }
 
 
-def _metric(close: float, prev_close: float | None, source: str) -> dict:
+def _metric(close: float, prev_close: float | None, source: str, observed_date=None, prev_date=None, symbol=None, kind="daily_close") -> dict:
     change_pct = (close - prev_close) / prev_close * 100 if prev_close else None
     return {
         "close": round(float(close), 2),
         "change_pct": round(float(change_pct), 2) if change_pct is not None else None,
         "sma20": None,
         "dev_pct": None,
-        "source": source,
+        "source": source, "source_symbol": symbol,
+        "close_raw": str(close), "prev_close_raw": str(prev_close) if prev_close is not None else None,
+        "observed_date": observed_date, "prev_observed_date": prev_date,
+        "observation_kind": kind,
     }
 
 
@@ -76,7 +79,11 @@ def _fetch_fmp(indicator: str) -> dict | None:
     close = row.get("price")
     if close is None:
         return None
-    return _metric(close, row.get("previousClose"), "fmp")
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+    stamp = row.get("timestamp")
+    date = datetime.fromtimestamp(stamp, ZoneInfo("America/New_York")).date().isoformat() if stamp else None
+    return _metric(close, row.get("previousClose"), "fmp", date, symbol=symbol, kind="latest")
 
 
 def _fetch_alphavantage(indicator: str) -> dict | None:
@@ -101,7 +108,7 @@ def _fetch_alphavantage(indicator: str) -> dict | None:
 
     close = float(points[0]["value"])
     prev = float(points[1]["value"]) if len(points) > 1 else None
-    return _metric(close, prev, "alphavantage")
+    return _metric(close, prev, "alphavantage", points[0].get("date"), points[1].get("date") if len(points)>1 else None, "TREASURY_YIELD:10year")
 
 
 def _fetch_fred(indicator: str) -> dict | None:
@@ -130,7 +137,7 @@ def _fetch_fred(indicator: str) -> dict | None:
 
     close = float(points[0]["value"])
     prev = float(points[1]["value"]) if len(points) > 1 else None
-    return _metric(close, prev, "fred")
+    return _metric(close, prev, "fred", points[0].get("date"), points[1].get("date") if len(points)>1 else None, series)
 
 
 def _fetch_stooq(indicator: str) -> dict | None:
@@ -162,7 +169,7 @@ def _fetch_stooq(indicator: str) -> dict | None:
 
     close = float(valid[-1][close_idx])
     prev = float(valid[-2][close_idx]) if len(valid) > 1 else None
-    return _metric(close, prev, "stooq")
+    return _metric(close, prev, "stooq", valid[-1][header.index("Date")], valid[-2][header.index("Date")] if len(valid)>1 else None, symbol)
 
 
 FETCHERS = {

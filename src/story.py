@@ -15,6 +15,8 @@ API 미설정/실패/형식 불량 시 규칙 기반 템플릿으로 폴백하�
 
 from __future__ import annotations
 
+from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+
 import json
 import logging
 import os
@@ -240,6 +242,11 @@ def _generate_narrations(
 ) -> tuple[list[str], str | None]:
     """Gemini로 내레이션 6줄을 생성한다. 실패 시 (폴백 문장, 사유)."""
     fallback = _fallback_narrations(villain, theme, market_data, prev_state, hook_type)
+    if current():
+        from src.market_facts import resolve
+        fallback = ["시장의 위협에 맞선다", resolve("{{FACT:TNX.close}}", market_data),
+                    resolve("{{FACT:VIX.close}}", market_data), "원칙으로 방어선을 세운다",
+                    "노출과 분산을 점검한다", "다음 시장 신호를 기다린다"]
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -295,17 +302,29 @@ def _generate_narrations(
         '["문장1","문장2","문장3","문장4","문장5","문장6"]'
     )
 
+    if current():
+        from src.market_facts import prompt_contract
+        prompt += prompt_contract()
+    def checked(raw):
+        lines = _parse_narrations(raw)
+        if lines is not None and current():
+            from src.market_facts import resolve
+            try:
+                lines = [resolve(line, market_data) for line in lines]
+            except Exception:
+                return None
+        return lines
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=STORY_MODEL, contents=prompt)
-        parsed = _parse_narrations(response.text or "")
+        client = (make_client(api_key) if current() else genai.Client(api_key=api_key))
+        response = guarded_generate(client, "text", "storyboard",model=STORY_MODEL, contents=prompt)
+        parsed = checked(response.text or "")
 
         # 훅 길이/형식 제약은 모델이 자주 어긴다(기존 25~45자 요구도 초과한 전례).
         # 실패 시 제약을 더 강하게 재주입해 1회만 재생성한다.
-        if parsed and not is_valid_hook_line(parsed[0], hook_type):
+        if (current() and parsed is None) or (parsed and not is_valid_hook_line(parsed[0], hook_type)):
             logger.warning(
                 "hook_line_rejected len=%s line=%s -- retrying once",
-                len(parsed[0]), parsed[0],
+                len(parsed[0]) if parsed else 0, parsed[0] if parsed else "market_fact_rejected",
             )
             retry_prompt = (
                 prompt
@@ -314,14 +333,16 @@ def _generate_narrations(
                 + ("반드시 '[긴급]' 으로 시작해야 한다. " if hook_type == "D" else "")
                 + "6개 문장 JSON 배열만 출력해라."
             )
-            retry = client.models.generate_content(model=STORY_MODEL, contents=retry_prompt)
-            retried = _parse_narrations(retry.text or "")
+            retry = guarded_generate(client, "text", "storyboard",model=STORY_MODEL, contents=retry_prompt)
+            retried = checked(retry.text or "")
             if retried and is_valid_hook_line(retried[0], hook_type):
                 parsed = retried
             elif parsed:
                 # 나머지 5줄은 살리고 훅만 규칙 문장으로 교체한다
-                parsed[0] = fallback_hook_line(hook_type, villain, market_data)
+                parsed[0] = fallback[0] if current() else fallback_hook_line(hook_type, villain, market_data)
                 logger.warning("hook_line_fallback_applied type=%s", hook_type)
+    except ControlError:
+        raise
     except Exception as e:  # noqa: BLE001 - 외부 API 실패는 규칙 문장으로 폴백
         if is_quota_exhausted(e):
             logger.warning("story_generation_aborted reason=quota_exhausted")

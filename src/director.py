@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+
 import logging
 import os
 from datetime import datetime, timezone
@@ -44,9 +46,11 @@ def _polish_narration(base_sentence: str) -> tuple[str, str | None]:
         f"{base_sentence}"
     )
     try:
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(model=NARRATION_MODEL, contents=prompt)
+        client = (make_client(api_key) if current() else genai.Client(api_key=api_key))
+        response = guarded_generate(client, "text", "polish",model=NARRATION_MODEL, contents=prompt)
         polished = (response.text or "").strip()
+    except ControlError:
+        raise
     except Exception as e:  # noqa: BLE001 - 외부 API 실패는 규칙 문장으로 폴백
         if is_quota_exhausted(e):
             logger.warning("narration_polish_aborted reason=quota_exhausted")
@@ -114,6 +118,13 @@ def generate_connected_script(market_data: dict, *, persist: bool = True, track:
         next_ep, villain, theme, story_state["villain_streak"],
     )
 
+    if current():
+        # Top-level polished narration is also exposed to downstream consumers.
+        from src.market_facts import resolve
+        script_data["narration"] = resolve(narration, market_data) if "{{FACT:" in narration else storyboard[0]["narration"]
+        from src.pipeline_control import fingerprint
+        script_data["market_validation_hash"] = fingerprint(market_data)
+        script_data["story_validation_hash"] = fingerprint(storyboard)
     if persist:
         script_data["episode_id"] = start_episode(script_data)
     return script_data

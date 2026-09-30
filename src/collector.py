@@ -38,6 +38,10 @@ def _empty_metric() -> dict:
     return {"close": None, "change_pct": None, "sma20": None, "dev_pct": None, "source": None}
 
 
+def _index_date(index):
+    return index.date().isoformat() if hasattr(index, "date") else None
+
+
 def _build_metric(hist) -> dict:
     closes = hist["Close"].dropna()
     if closes.empty:
@@ -60,6 +64,10 @@ def _build_metric(hist) -> dict:
         "sma20": round(sma20, 2) if sma20 is not None else None,
         "dev_pct": round(dev_pct, 2) if dev_pct is not None else None,
         "source": "yfinance",
+        "close_raw": str(close), "prev_close_raw": str(prev_close) if prev_close is not None else None,
+        "observed_date": _index_date(closes.index[-1]),
+        "prev_observed_date": _index_date(closes.index[-2]) if len(closes) > 1 else None,
+        "observation_kind": "latest",
     }
 
 
@@ -85,6 +93,15 @@ def fetch_market_data() -> dict:
         if recovered:
             data[name] = recovered
 
+    from datetime import datetime, timezone
+    from src.pipeline_control import fingerprint
+    for name, metric in data.items():
+        metric.update(source_symbol=metric.get("source_symbol") or TICKERS[name],
+                      unit="percent" if name == "TNX" else "USD" if name in ("GOLD", "OIL") else "index",
+                      instrument_kind="yield" if name == "TNX" else "future" if name in ("GOLD", "OIL") else "index",
+                      collected_at_utc=datetime.now(timezone.utc).isoformat(),
+                      observation_timezone="America/New_York", schema_version=1)
+        metric["raw_payload_hash"] = fingerprint({k: metric.get(k) for k in ("close_raw", "prev_close_raw", "observed_date", "source")})
     ok = sum(1 for m in data.values() if m["close"] is not None)
     sources = {n: m.get("source") for n, m in data.items()}
     logger.info(

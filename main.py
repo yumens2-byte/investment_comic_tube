@@ -27,9 +27,13 @@ from src.validation import (
     validate_storyboard,
 )
 
+from src.pipeline_control import protected, current, reserve
+from src.market_facts import validate_provenance
+
 logger = logging.getLogger(__name__)
 
 
+@protected("full-preview", forced_hero="GOC")
 def goc_video_pilot() -> int:
     """Generate GOC media from a recent EDT event without DB writes or upload."""
     configure_logging()
@@ -99,6 +103,7 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
     return scenes
 
 
+@protected("production")
 def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if track not in ("EDT", "GOC"):
         raise ValueError("unknown hero track")
@@ -122,19 +127,42 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         # 취소된 토큰으로 수 분간 유료 작업을 수행한 뒤 업로드에서 실패하는 일을
         # 막고, 여기서 만든 service를 실제 업로드에도 재사용한다.
         youtube_service = None if video_pilot else get_youtube_service()
+        if current() and not video_pilot and youtube_service is None:
+            raise ValidationError("youtube_credentials_required_before_generation")
 
         market_data = fetch_market_data()
 
         # 필수 지표가 없으면 여기서 중단한다. start_episode() 이전이므로
         # DB에 고아 회차 row가 남지 않고, YouTube에도 아무것도 올라가지 않는다.
         validate_market_data(market_data)
+        if current():
+            validate_provenance(market_data)
 
-        # script 생성 시 episode row가 status=script_ready 로 선기록된다
-        if track == "GOC":
-            script_data = generate_connected_script(market_data, persist=not video_pilot, track=track)
+        cached_script = False
+        script_inputs = {"track": track, "market": {key: {f: metric.get(f) for f in
+                         ("close_raw", "prev_close_raw", "observed_date", "source", "source_symbol")}
+                         for key, metric in market_data.items()}}
+        if current():
+            from src.asset_store import restore
+            import json
+            from pathlib import Path
+            cached_script = restore("script", "final", script_inputs, "artifacts/script.json")
+        if cached_script:
+            script_data = json.loads(Path("artifacts/script.json").read_text())
         else:
-            script_data = (generate_connected_script(market_data, persist=False) if video_pilot
-                           else generate_connected_script(market_data))
+            # script 생성 시 episode row가 status=script_ready 로 선기록된다
+            if track == "GOC":
+                script_data = generate_connected_script(market_data, persist=not video_pilot, track=track)
+            else:
+                script_data = (generate_connected_script(market_data, persist=False) if video_pilot
+                               else generate_connected_script(market_data))
+            if current():
+                from src.asset_store import save
+                import json
+                from pathlib import Path
+                Path("artifacts").mkdir(exist_ok=True)
+                Path("artifacts/script.json").write_text(json.dumps(script_data, ensure_ascii=False))
+                save("script", "final", script_inputs, "artifacts/script.json")
         script_data["track"] = track
         script_data["privacy"] = "private"
         episode_id = script_data.get("episode_id")
@@ -142,6 +170,10 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
             degraded.append(script_data["degraded_reason"])
 
         storyboard = script_data.get("storyboard") or []
+        if current():
+            from src.pipeline_control import fingerprint
+            if script_data.get("story_validation_hash") != fingerprint(storyboard):
+                raise ValidationError("validated_story_changed")
         validate_storyboard(storyboard)
         narrations = [beat.get("narration", "") for beat in storyboard]
 
@@ -181,6 +213,10 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
 
         step = current_step = record_step_start(episode_id, "render") if not video_pilot else None
         scenes = _build_scenes(storyboard, image_paths, audio_paths)
+        if current():
+            if script_data.get("story_validation_hash") != fingerprint(storyboard):
+                raise ValidationError("validated_story_changed")
+        reserve("render", "final", script_data)
         video_file = render_video(script_data, scenes=scenes, require_storyboard=True)
         validate_rendered_video(video_file)
         if not video_pilot:
@@ -190,10 +226,17 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         current_step = None
 
         if video_pilot:
-            logger.info("video_pilot_finished video=%s upload=false db_write=false", video_file)
+            logger.info("video_pilot_finished video=%s upload=false episode_write=false control_write=%s", video_file, bool(current()))
             return 0
 
         step = current_step = record_step_start(episode_id, "upload")
+        if current():
+            from src.asset_store import save
+            from src.pipeline_control import fingerprint
+            if script_data.get("market_validation_hash") != fingerprint({k:v for k,v in script_data["market_snapshot"].items() if not k.startswith("_")}):
+                raise ValidationError("market_snapshot_changed")
+            script_data["degraded_reason"] = ";".join(degraded) if degraded else None
+            save("video", "final", script_data, video_file)
         video_id = upload_to_youtube(
             video_file, script_data, youtube_service=youtube_service
         )
@@ -215,7 +258,7 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         logger.error("pipeline_aborted_validation reason=%s", e)
         if current_step:
             record_step_finish(current_step, "failed", error_code=str(e)[:200])
-        if episode_id and not video_pilot:
+        if episode_id and not video_pilot and not (current() and current().upload()):
             try:
                 update_episode(episode_id, status="aborted_validation", degraded_reason=str(e))
             except Exception:
@@ -226,7 +269,7 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         # 실패한 step 을 running 으로 방치하면 관측이 어긋난다 (Ep.1 upload 고아 사례)
         if current_step:
             record_step_finish(current_step, "failed", error_code=f"{type(e).__name__}"[:200])
-        if episode_id and not video_pilot:
+        if episode_id and not video_pilot and not (current() and current().upload()):
             try:
                 update_episode(
                     episode_id,
@@ -245,6 +288,7 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     return 0
 
 
+@protected("preview")
 def budget_video_pilot(track=None) -> int:
     """One-image, one-voice preview; no text generation, DB writes or upload."""
     configure_logging()
@@ -253,11 +297,13 @@ def budget_video_pilot(track=None) -> int:
         validate_render_environment()
         market = fetch_market_data()
         validate_market_data(market)
+        if current():
+            validate_provenance(market)
         villain, theme, _ = select_villain(market, {})
         caption = "자본의 방어선을 지킨다" if track == "GOC" else "시장의 위협에 맞선다"
         script = {"track": track, "preview": True, "episode": "PREVIEW", "villain": villain,
                   "theme": theme, "market_snapshot": market}
-        logger.info("budget_pilot_plan track=%s text_calls=0 image_calls=1 tts_calls=1 upload=false db_write=false", track)
+        logger.info("budget_pilot_plan track=%s text_calls=0 image_calls=1 tts_calls=1 upload=false episode_write=false control_write=%s", track, bool(current()))
         images, _ = generate_scene_images(script, scenes=[GOC_IMAGE_SLOTS[0] if track == "GOC" else SLOT_SCENES[0]],
                                           model_name="gemini-3.1-flash-lite-image", image_size="1K")
         validate_image_assets(images, expected_slots=1)
@@ -265,6 +311,7 @@ def budget_video_pilot(track=None) -> int:
                                         model_name="gemini-3.8-flash-lite-tts", max_attempts=1)
         if len(audio) != 1 or not audio[0]:
             raise ValidationError("미리보기 음성 생성 실패")
+        reserve("render", "preview", script)
         video = render_video(script, scenes=[{"image": images[0], "caption": caption,
                             "audio": audio[0], "is_hook": False}], require_storyboard=True)
         validate_rendered_video(video)

@@ -3,6 +3,11 @@ name: Deployment & Runtime Healthcheck
 # 배포가 의도대로 반영됐는지, 그리고 매일 발행이 정상 동작하는지 자동 점검한다.
 # Gemini API 를 호출하지 않으므로 이 워크플로우 자체는 비용이 발생하지 않는다.
 
+env:
+  OPERATIONAL_SAFETY_ENABLED: ${{ vars.OPERATIONAL_SAFETY_ENABLED || 'true' }}
+  PIPELINE_CHANNEL_KEY: ${{ vars.PIPELINE_CHANNEL_KEY || 'EDT_UNIVERSE_INVEST_AREA99' }}
+  UPLOAD_SESSION_FERNET_KEY: ${{ secrets.UPLOAD_SESSION_FERNET_KEY }}
+
 on:
   push:
     branches: [main]

@@ -331,6 +331,29 @@ def check_runtime_health(r: Report) -> None:
         r.ok("villain_variety", f"최근 {len(villains)}회 빌런 {len(set(villains))}종")
 
 
+def check_operational_safety(r: Report) -> None:
+    from src.pipeline_control import enabled, Control
+    if not enabled():
+        r.warn("operational_safety", "미활성화: DB/저장소 준비 후 OPERATIONAL_SAFETY_ENABLED=true")
+        return
+    try:
+        from src.asset_store import verify_store
+        from src.session_crypto import session_cipher
+        session_cipher()
+        verify_store()
+        result = Control("preview", "EDT").rpc("healthcheck")
+        if result.get("version") != 1:
+            raise RuntimeError("control_schema_version_mismatch")
+        from src.db_client import get_client
+        unresolved = get_client().table("pipeline_slots").select("kst_date").eq("channel", os.environ.get("PIPELINE_CHANNEL_KEY") or "default").eq("mode_group", "production").in_("upload->>state", ["unknown", "session_creating", "session_ready", "in_progress"]).limit(1).execute()
+        if unresolved.data:
+            r.fail("operational_upload", "미완료 업로드 원장: 조회/복구 필요")
+        else:
+            r.ok("operational_safety", "RPC v1/private bucket/encryption/원장 조회 통과")
+    except Exception as exc:
+        r.fail("operational_safety", type(exc).__name__)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="배포 반영 및 운영 상태 자동 점검")
     parser.add_argument("--mode", choices=["config", "runtime", "all"], default="config")
@@ -344,9 +367,12 @@ def main() -> int:
         check_code_constants(r)
         check_environment(r)
         check_db_schema(r)
+        check_operational_safety(r)
 
     if args.mode in ("runtime", "all"):
         check_runtime_health(r)
+        if args.mode == "runtime":
+            check_operational_safety(r)
 
     print("\n" + "=" * 60)
     if r.failures:

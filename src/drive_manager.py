@@ -106,6 +106,11 @@ def _reclaim_failed_episode(client, episode_no: int) -> None:
                 "번호 산출 로직 확인 필요."
             )
         old_id = row.get("id")
+        from src.pipeline_control import enabled
+        if enabled():
+            receipts = client.table("pipeline_slots").select("upload").eq("upload->>episode_id", old_id).execute()
+            if receipts.data:
+                raise RuntimeError("upload_receipt_protects_episode; reconcile before reclaim")
         client.table("step_runs").delete().eq("episode_id", old_id).execute()
         client.table("episodes").delete().eq("id", old_id).execute()
         logger.warning(
