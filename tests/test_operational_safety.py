@@ -196,3 +196,44 @@ class SessionEncryptionTest(unittest.TestCase):
             self.assertEqual(session_cipher().decrypt(session_cipher().encrypt(b'x')),b'x')
         with patch.dict(os.environ,{'UPLOAD_SESSION_FERNET_KEY':'','SUPABASE_SERVICE_ROLE_KEY':''}):
             with self.assertRaises(ValueError):session_cipher()
+
+
+class ActiveSafetyImageTest(unittest.TestCase):
+    def test_prompt_is_pure_with_active_control(self):
+        from src.image_generator import _build_prompt
+        token = activate(Mock())
+        try:
+            with patch('src.image_generator.make_client') as factory:
+                for track in ('EDT', 'GOC'):
+                    with self.subTest(track=track):
+                        prompt = _build_prompt({'track': track, 'villain': 'Debt Titan'}, 'market watch', True)
+                        self.assertIn('market watch', prompt)
+                        self.assertIn('NO numbers', prompt)
+                factory.assert_not_called()
+        finally:
+            reset(token)
+
+    def test_active_preview_reaches_reserved_image_call(self):
+        from src.image_generator import generate_scene_images
+        client = Mock()
+        client.models.generate_content.return_value = SimpleNamespace(
+            parts=[SimpleNamespace(inline_data=SimpleNamespace(data=b'fixture-image'))])
+        control = Mock()
+        token = activate(control)
+        try:
+            with tempfile.TemporaryDirectory() as directory, \
+                 patch.dict(os.environ, {'GEMINI_API_KEY': 'test-only'}), \
+                 patch('google.genai.Client', return_value=client), \
+                 patch('src.image_generator._load_reference_images', return_value=[]), \
+                 patch('src.asset_store.restore', return_value=False), \
+                 patch('src.asset_store.save'), \
+                 patch('src.content_quality.validate_image_assets'):
+                paths, error = generate_scene_images(
+                    {'track': 'EDT', 'villain': 'Debt Titan'}, output_dir=directory,
+                    scenes=['market watch'], model_name='preview-fixture', image_size='1K')
+                self.assertIsNone(error)
+                self.assertEqual(Path(paths[0]).read_bytes(), b'fixture-image')
+                control.reserve.assert_called_once()
+                client.models.generate_content.assert_called_once()
+        finally:
+            reset(token)

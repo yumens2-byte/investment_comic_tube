@@ -61,8 +61,6 @@ def _build_prompt(script_data: dict, scene: str | None = None, has_reference: bo
         if scene
         else f"The tiger hero confronts {villain} in a dramatic market battle scene. "
     )
-    if current():
-        client = make_client(api_key)
     if script_data.get("track") == "GOC":
         hero = (
             "Guardian of Capital (GOC), the capital-protection heroine. "
