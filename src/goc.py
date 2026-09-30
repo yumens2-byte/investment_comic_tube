@@ -24,7 +24,7 @@ GOC_SCENES = [
     ("LESSON", "GOC reviews the remaining risk without promising a return or predicting the next move."),
 ]
 GOC_IMAGE_SLOTS = [
-    "Close-up of GOC, Guardian of Capital, assessing an immediate market risk. Keep lower caption area visually clear.",
+    "Close-up of GOC, Guardian of Capital, assessing an immediate market risk. Use one continuous close-up composition with a single coherent background and camera perspective.",
     "The villain threatens a financial city; GOC measures the capital exposed to the shock.",
     "GOC establishes a protective boundary between investor capital and the villain.",
     "GOC defends that boundary and reviews the remaining uncertainty, with no guaranteed victory.",
