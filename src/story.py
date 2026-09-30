@@ -44,7 +44,7 @@ BEAT_SCENES = [
             "snarling with bared fangs, fierce amber eyes locked on the viewer, "
             "the toothed blade of his roaring chainsaw crossing diagonally in front of him, "
             "harsh dramatic rim light, sparks and embers flying, shallow depth of field. "
-            "Place his head in the UPPER TWO THIRDS; keep the BOTTOM THIRD uncluttered."
+            "Use one continuous close-up composition with consistent perspective across the entire frame."
         ),
     ),
     (
@@ -134,7 +134,7 @@ SLOT_SCENES = [
         "snarling with bared fangs, fierce amber eyes locked on the viewer, "
         "the toothed blade of his roaring chainsaw crossing diagonally in front of him, "
         "harsh dramatic rim light, sparks and embers flying, shallow depth of field. "
-        "Place his head and the chainsaw blade in the UPPER TWO THIRDS of the frame. Keep the BOTTOM THIRD visually simple and uncluttered -- a large caption will be overlaid there, so nothing important may sit in the bottom third."
+        "Use one continuous close-up composition. His torso and equipment continue naturally to the frame edges, with a single coherent background and camera perspective."
     ),
     (
         "The villain looms huge over a cracking financial city skyline, shockwave and "
