@@ -42,6 +42,23 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _is_story_fallback(degraded_reason) -> bool:
+    return any(part.startswith("story:") for part in str(degraded_reason or "").split(";"))
+
+
+def _without_fallback_story(story_state, degraded_reason):
+    """폴백 대본으로 발행된 회차의 마지막 문장은 서사로 이어받지 않는다.
+
+    Ep.31·32 는 폴백 문장 '다음 시장 신호를 기다린다' 가 unresolved 로 저장돼
+    다음 회차 프롬프트의 이어가기/회피 목록을 오염시켰다. 빌런 연속·훅/엔딩 회전 정보는 유지한다.
+    """
+    if not isinstance(story_state, dict) or not _is_story_fallback(degraded_reason):
+        return story_state
+    cleaned = dict(story_state)
+    cleaned["unresolved"] = None
+    return cleaned
+
+
 def fetch_latest_episode_state() -> dict:
     """가장 최근 발행 상태를 조회한다. 빈 테이블에서만 기본값을 반환한다."""
     logger.info("episode_state_fetch_started backend=supabase")
@@ -51,7 +68,7 @@ def fetch_latest_episode_state() -> dict:
         # 발행된 회차만 기준으로 삼아야 번호 gap(YouTube 가 Ep.2 부터 시작)이 생기지 않는다.
         result = (
             client.table("episodes")
-            .select("episode_no, status, villain, story_state, market_snapshot")
+            .select("episode_no, status, villain, story_state, market_snapshot, degraded_reason")
             .in_("status", PUBLISHED_STATUSES)
             .order("episode_no", desc=True)
             .limit(1)
@@ -70,7 +87,7 @@ def fetch_latest_episode_state() -> dict:
     state = dict(DEFAULT_STATE)
     state["episode"] = latest.get("episode_no", DEFAULT_STATE["episode"])
     state["villain"] = latest.get("villain")
-    state["story_state"] = latest.get("story_state")
+    state["story_state"] = _without_fallback_story(latest.get("story_state"), latest.get("degraded_reason"))
     state["market_snapshot"] = latest.get("market_snapshot")
     logger.info(
         "episode_state_fetch_finished episode=%s status=%s prev_villain=%s has_story_state=%s",
@@ -240,7 +257,7 @@ def fetch_recent_cliffhangers(limit: int = 3) -> list[str]:
         client = get_client()
         result = (
             client.table("episodes")
-            .select("story_state")
+            .select("story_state, degraded_reason")
             .in_("status", PUBLISHED_STATUSES)
             .order("episode_no", desc=True)
             .limit(limit)
@@ -252,7 +269,7 @@ def fetch_recent_cliffhangers(limit: int = 3) -> list[str]:
 
     lines = []
     for row in result.data or []:
-        state = row.get("story_state") or {}
+        state = _without_fallback_story(row.get("story_state"), row.get("degraded_reason")) or {}
         text = state.get("unresolved")
         if text:
             lines.append(str(text))

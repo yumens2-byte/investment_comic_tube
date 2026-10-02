@@ -20,6 +20,7 @@ from src.pipeline_control import generate as guarded_generate, current, ControlE
 import json
 import logging
 import os
+import re
 
 from src.hooks import (
     HOOK_MAX_CHARS,
@@ -85,6 +86,9 @@ BEAT_SCENES = [
 ]
 
 BEAT_COUNT = len(BEAT_SCENES)
+# renderer 본문 자막 규격 (renderer._render_segment 와 동일). 안전 모드에서 유료 생성 전 검사한다.
+BODY_WRAP_CHARS = 19
+BODY_MAX_LINES = 3
 
 # 마무리(6번 비트) 유형. 5일 운영 실측: 5회 중 4회가 '과연 EDT는 방어선을 지켜낼까요?' 변주였다.
 # 훅과 같은 방식으로 유형을 회전시켜 반복을 끊는다.
@@ -202,8 +206,28 @@ def _parse_narrations(raw: str) -> list[str] | None:
     return lines
 
 
-def _build_continuity_context(prev_state: dict | None, market_data: dict, villain: str = "") -> str:
-    """이전 회차와의 연결고리를 프롬프트용 문장으로 만든다."""
+# 안전 모드(OPERATIONAL_SAFETY_ENABLED) 폴백 문장. 발행 대상이 아니며
+# 다음 회차의 이어가기/회피 목록 입력으로도 쓰지 않는다 (Ep.31·32 오염 사례).
+SAFE_FALLBACK_TEXT = ["시장의 위협에 맞선다", "원칙으로 방어선을 세운다",
+                      "노출과 분산을 점검한다", "다음 시장 신호를 기다린다"]
+_PROMPT_NUMBER = re.compile(r"\d[\d.,]*")
+
+
+def is_fallback_line(text: str | None) -> bool:
+    return bool(text) and str(text).strip() in SAFE_FALLBACK_TEXT
+
+
+def mask_numbers(text: str) -> str:
+    """안전 모드 프롬프트에 원시 숫자가 들어가 모델이 숫자를 베끼는 것을 막는다."""
+    return _PROMPT_NUMBER.sub("(수치)", text)
+
+
+def _build_continuity_context(prev_state: dict | None, market_data: dict, villain: str = "",
+                              *, numeric: bool = True) -> str:
+    """이전 회차와의 연결고리를 프롬프트용 문장으로 만든다.
+
+    numeric=False(안전 모드)면 원시 수치 대신 방향만 쓰고, 이전 문장 속 숫자를 가린다.
+    """
     if not prev_state:
         return "이번이 첫 회차다. 이전 회차 언급 없이 시작해라."
 
@@ -216,8 +240,9 @@ def _build_continuity_context(prev_state: dict | None, market_data: dict, villai
     story_state = prev_state.get("story_state") or {}
     unresolved = story_state.get("unresolved")
     streak = story_state.get("villain_streak")
-    if unresolved:
-        parts.append(f"직전 회차에서 해결되지 않은 위협: {unresolved}")
+    if unresolved and not is_fallback_line(unresolved):
+        text = unresolved if numeric else mask_numbers(str(unresolved))
+        parts.append(f"직전 회차에서 해결되지 않은 위협: {text}")
     if isinstance(streak, int) and streak >= 2 and prev_villain == villain:
         parts.append(f"'{villain}'은 이번이 {streak + 1}회 연속 등장이다. 장기전임을 반영해라.")
 
@@ -228,11 +253,168 @@ def _build_continuity_context(prev_state: dict | None, market_data: dict, villai
         old_v = (prev_snapshot.get(key) or {}).get("close")
         if isinstance(now_v, (int, float)) and isinstance(old_v, (int, float)):
             direction = "올랐다" if now_v > old_v else ("내렸다" if now_v < old_v else "그대로다")
-            parts.append(f"{label}는 직전 회차 {old_v}에서 {now_v}로 {direction}.")
+            if numeric:
+                parts.append(f"{label}는 직전 회차 {old_v}에서 {now_v}로 {direction}.")
+            else:
+                parts.append(f"{label}는 직전 회차보다 {direction}.")
 
     if not parts:
         return "이전 회차 정보가 부족하다. 이전 회차를 구체적으로 언급하지 마라."
     return " ".join(parts)
+
+
+def _build_story_prompt(
+    villain: str, theme: str, market_data: dict, prev_state: dict | None,
+    hook_type: str, ending_type: str, recent_cliffhangers: list[str] | None,
+    *, safe: bool,
+) -> str:
+    """내레이션 프롬프트. safe=True면 원시 수치 대신 사실 토큰 목록만 제공한다."""
+    continuity = _build_continuity_context(prev_state, market_data, villain, numeric=not safe)
+    spec = HOOK_SPECS[hook_type]
+    ending = ENDING_SPECS[ending_type]
+    avoid = [line for line in (recent_cliffhangers or []) if not is_fallback_line(line)]
+    if safe:
+        avoid = [mask_numbers(line) for line in avoid]
+        from src.market_facts import prompt_contract
+        data_line = "오늘 시장 데이터는 아래 [수치 규칙]의 사실 토큰으로만 제공된다. "
+        compare_rule = ("2번은 오늘 사실 토큰 두 개를 함께 써서 비교하고, 3번은 그 흐름이 시장 심리에 "
+                        "미치는 인과를 설명하며, ")
+        length_rule = ("2~6번 문장은 토큰 대입 후 자막 3줄(한 줄 19자) 안에 들어가야 하므로 "
+                       "토큰을 제외한 본문을 15자~30자로 쓴다. 토큰은 한 문장에 최대 2개. ")
+    else:
+        tnx = market_data.get("TNX", {}).get("close")
+        vix = market_data.get("VIX", {}).get("close")
+        nasdaq = market_data.get("NASDAQ", {}).get("change_pct")
+        spx = market_data.get("SPX", {}).get("change_pct")
+        dxy = market_data.get("DXY", {}).get("close")
+        gold = market_data.get("GOLD", {}).get("close")
+        data_line = (f"오늘 시장 데이터: 미국10년물금리 {tnx}, VIX {vix}, 나스닥 등락률 {nasdaq}%, "
+                     f"S&P500 등락률 {spx}%, 달러인덱스 {dxy}, 금 {gold}. ")
+        compare_rule = ("2번은 오늘 수치 두 개를 비교하고, 3번은 그 수치가 시장 심리에 미치는 인과를 설명하며, ")
+        length_rule = "2~6번 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
+
+    prompt = (
+        "너는 한국어 주식투자 숏폼 영상의 내레이션 작가다. "
+        + data_line
+        + f"빌런은 '{villain}', 주제는 '{theme}'. 히어로는 체인소를 무기로 쓰는 호랑이 캐릭터 'EDT'다.\n"
+        f"[이전 회차 맥락] {continuity}\n"
+        f"[1번 문장 = 오프닝 훅] 유형: {spec['name']}. {spec['guide']} "
+        f"예시: \"{spec['example']}\"\n"
+        f"1번 문장은 반드시 {HOOK_MIN_CHARS}자 이상 {HOOK_MAX_CHARS}자 이하로 쓴다. "
+        "쇼츠 피드에서 스크롤을 멈추게 하는 것이 목적이므로, 군더더기 서두 없이 "
+        "첫 어절부터 강하게 시작한다.\n"
+        + ("1번 문장에는 사실 토큰과 숫자를 쓰지 않는다.\n" if safe else "")
+        + "아래 6개 장면 순서에 맞춰 각각 한 문장씩 한국어 내레이션을 써라.\n"
+        "1) 오프닝 훅 2) 시장 상황과 빌런 등장 3) 시장 타격 4) EDT 등장 "
+        "5) 대결 6) 마무리 겸 다음 회차 예고(클리프행어)\n"
+        f"[6번 문장 = 마무리] 유형: {ending['name']}. {ending['guide']} "
+        f"예시: \"{ending['example']}\"\n"
+        + (
+            "다음은 최근 회차의 마무리 문장들이다. 표현·구조·어휘가 이것들과 겹치면 안 된다:\n"
+            + "\n".join(f"  - {line}" for line in avoid)
+            + "\n"
+            if avoid
+            else ""
+        )
+        + "'과연', '~할 수 있을까요', '방어선을 지켜낼까요' 같은 상투구를 반복하지 마라.\n"
+        "각 문장은 단순한 영웅 서사가 아니라 투자자가 가져갈 정보가 있어야 한다. "
+        + compare_rule
+        + "5번은 예측이나 매수 추천 대신 비중·분산·손절·관망 중 하나의 대응 원칙을 담아라. "
+        "'계좌가 비명을 질렀다', '우리에겐 EDT가 있다'처럼 어느 날에도 붙일 수 있는 빈 문장은 금지한다. "
+        "수치를 지어내지 말고 위에 제공된 데이터만 사용한다.\n"
+        + length_rule
+        + "과장된 투자 권유나 수익 보장 표현은 절대 쓰지 마라.\n"
+        '반드시 다음 JSON 배열 형식으로만 출력해라. 설명이나 마크다운 없이: '
+        '["문장1","문장2","문장3","문장4","문장5","문장6"]'
+    )
+    if safe:
+        prompt += prompt_contract(market_data)
+    return prompt
+
+
+def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dict) -> tuple[str | None, str | None]:
+    """안전 모드 한 문장 검사. (대입된 문장, 위반 사유) 중 하나를 반환한다."""
+    from src.market_facts import check_line, resolve
+    from src.renderer import HOOK_WRAP_CHARS, _wrap_korean
+    from src.validation import ValidationError
+
+    reason = check_line(raw_line)
+    if reason:
+        return None, reason
+    try:
+        line = resolve(raw_line, market_data).strip()
+    except ValidationError as exc:
+        return None, str(exc)
+    if index == 0 and not is_valid_hook_line(line, hook_type):
+        return None, f"hook_length_{HOOK_MIN_CHARS}_{HOOK_MAX_CHARS}_or_format"
+    width, max_lines = (HOOK_WRAP_CHARS, 2) if index == 0 else (BODY_WRAP_CHARS, BODY_MAX_LINES)
+    try:
+        _wrap_korean(line, width, max_lines=max_lines)
+    except ValueError:
+        return None, f"caption_over_{max_lines}_lines"
+    return line, None
+
+
+def _evaluate_safe(raw_lines: list[str] | None, hook_type: str, market_data: dict):
+    """(문장별 대입 결과 목록, {인덱스: 사유}). 파싱 실패면 전 문장을 실패로 본다."""
+    if raw_lines is None:
+        return [None] * BEAT_COUNT, {i: "malformed_json" for i in range(BEAT_COUNT)}
+    results, problems = [], {}
+    for index, raw_line in enumerate(raw_lines):
+        line, reason = _check_safe_line(index, raw_line, hook_type, market_data)
+        results.append(line)
+        if reason:
+            problems[index] = reason
+            logger.warning("story_line_rejected beat=%s reason=%s line=%s", index + 1, reason, raw_line)
+    return results, problems
+
+
+def _generate_narrations_safe(
+    client, prompt: str, villain: str, hook_type: str, market_data: dict, fallback: list[str],
+) -> tuple[list[str], str | None]:
+    """사실 토큰 규칙을 지키는 내레이션 생성 (최대 2회 호출: 생성 + 문장 단위 수정).
+
+    일일 제어 한도(storyboard 2회) 안에서 동작한다. 수정 후에도 남는 위반 문장이 있으면
+    짧은 폴백을 반환하고 사유를 남긴다. 폴백은 director 에서 발행 차단된다.
+    """
+    response = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=prompt)
+    first_raw = _parse_narrations(response.text or "")
+    first, problems = _evaluate_safe(first_raw, hook_type, market_data)
+    if not problems:
+        return first, None
+
+    detail = "; ".join(f"{i + 1}번={reason}" for i, reason in sorted(problems.items()))
+    repair_prompt = (
+        prompt
+        + "\n\n[수정 지시] 직전 응답에서 다음 문장이 규칙을 위반했다: " + detail + ". "
+        + "숫자·%·수량 표현은 토큰으로만 쓰고, 토큰 앞뒤에 지표명·상승/하락을 붙이지 말고, "
+        + f"1번은 {HOOK_MIN_CHARS}~{HOOK_MAX_CHARS}자로 쓴다. "
+        + ("1번은 반드시 '[긴급]' 으로 시작한다. " if hook_type == "D" else "")
+        + (f"직전 응답: {json.dumps(first_raw, ensure_ascii=False)}. 위반하지 않은 문장은 그대로 두고 "
+           if first_raw else "")
+        + "6개 문장 JSON 배열 전체만 다시 출력해라."
+    )
+    retry = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=repair_prompt)
+    second, second_problems = _evaluate_safe(_parse_narrations(retry.text or ""), hook_type, market_data)
+
+    merged: list[str | None] = []
+    for index in range(BEAT_COUNT):
+        if index not in second_problems:
+            merged.append(second[index])
+        elif index not in problems:
+            merged.append(first[index])
+        else:
+            merged.append(None)
+
+    if merged[0] is None:
+        # 훅은 규칙 문장으로 대체할 수 있다 (프로그램 생성, 길이 보장)
+        merged[0] = fallback_hook_line(hook_type, villain, market_data)
+        logger.warning("hook_line_fallback_applied type=%s", hook_type)
+    missing = [i + 1 for i, line in enumerate(merged) if line is None]
+    if missing:
+        logger.warning("story_fact_gate_failed beats=%s", missing)
+        return fallback, "story:fact_gate_rejected"
+    return merged, None
 
 
 def _generate_narrations(
@@ -241,12 +423,12 @@ def _generate_narrations(
     recent_cliffhangers: list[str] | None = None,
 ) -> tuple[list[str], str | None]:
     """Gemini로 내레이션 6줄을 생성한다. 실패 시 (폴백 문장, 사유)."""
+    safe = bool(current())
     fallback = _fallback_narrations(villain, theme, market_data, prev_state, hook_type)
-    if current():
+    if safe:
         from src.market_facts import resolve
-        fallback = ["시장의 위협에 맞선다", resolve("{{FACT:TNX.close}}", market_data),
-                    resolve("{{FACT:VIX.close}}", market_data), "원칙으로 방어선을 세운다",
-                    "노출과 분산을 점검한다", "다음 시장 신호를 기다린다"]
+        fallback = [SAFE_FALLBACK_TEXT[0], resolve("{{FACT:TNX.close}}", market_data),
+                    resolve("{{FACT:VIX.close}}", market_data), *SAFE_FALLBACK_TEXT[1:]]
 
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -257,74 +439,21 @@ def _generate_narrations(
     except ImportError:
         return fallback, "story:google_genai_not_installed"
 
-    tnx = market_data.get("TNX", {}).get("close")
-    vix = market_data.get("VIX", {}).get("close")
-    nasdaq = market_data.get("NASDAQ", {}).get("change_pct")
-    spx = market_data.get("SPX", {}).get("change_pct")
-    dxy = market_data.get("DXY", {}).get("close")
-    gold = market_data.get("GOLD", {}).get("close")
-    continuity = _build_continuity_context(prev_state, market_data, villain)
-    spec = HOOK_SPECS[hook_type]
-    ending = ENDING_SPECS[ending_type]
-
-    prompt = (
-        "너는 한국어 주식투자 숏폼 영상의 내레이션 작가다. "
-        f"오늘 시장 데이터: 미국10년물금리 {tnx}, VIX {vix}, 나스닥 등락률 {nasdaq}%, "
-        f"S&P500 등락률 {spx}%, 달러인덱스 {dxy}, 금 {gold}. "
-        f"빌런은 '{villain}', 주제는 '{theme}'. 히어로는 체인소를 무기로 쓰는 호랑이 캐릭터 'EDT'다.\n"
-        f"[이전 회차 맥락] {continuity}\n"
-        f"[1번 문장 = 오프닝 훅] 유형: {spec['name']}. {spec['guide']} "
-        f"예시: \"{spec['example']}\"\n"
-        f"1번 문장은 반드시 {HOOK_MIN_CHARS}자 이상 {HOOK_MAX_CHARS}자 이하로 쓴다. "
-        "쇼츠 피드에서 스크롤을 멈추게 하는 것이 목적이므로, 군더더기 서두 없이 "
-        "첫 어절부터 강하게 시작한다.\n"
-        "아래 6개 장면 순서에 맞춰 각각 한 문장씩 한국어 내레이션을 써라.\n"
-        "1) 오프닝 훅 2) 시장 상황과 빌런 등장 3) 시장 타격 4) EDT 등장 "
-        "5) 대결 6) 마무리 겸 다음 회차 예고(클리프행어)\n"
-        f"[6번 문장 = 마무리] 유형: {ending['name']}. {ending['guide']} "
-        f"예시: \"{ending['example']}\"\n"
-        + (
-            "다음은 최근 회차의 마무리 문장들이다. 표현·구조·어휘가 이것들과 겹치면 안 된다:\n"
-            + "\n".join(f"  - {line}" for line in recent_cliffhangers)
-            + "\n"
-            if recent_cliffhangers
-            else ""
-        )
-        + "'과연', '~할 수 있을까요', '방어선을 지켜낼까요' 같은 상투구를 반복하지 마라.\n"
-        "각 문장은 단순한 영웅 서사가 아니라 투자자가 가져갈 정보가 있어야 한다. "
-        "2번은 오늘 수치 두 개를 비교하고, 3번은 그 수치가 시장 심리에 미치는 인과를 설명하며, "
-        "5번은 예측이나 매수 추천 대신 비중·분산·손절·관망 중 하나의 대응 원칙을 담아라. "
-        "'계좌가 비명을 질렀다', '우리에겐 EDT가 있다'처럼 어느 날에도 붙일 수 있는 빈 문장은 금지한다. "
-        "수치를 지어내지 말고 위에 제공된 데이터만 사용한다.\n"
-        "2~6번 문장은 소리내어 읽었을 때 4초 이내여야 하며 25자~45자 사이로 쓴다. "
-        "과장된 투자 권유나 수익 보장 표현은 절대 쓰지 마라.\n"
-        '반드시 다음 JSON 배열 형식으로만 출력해라. 설명이나 마크다운 없이: '
-        '["문장1","문장2","문장3","문장4","문장5","문장6"]'
-    )
-
-    if current():
-        from src.market_facts import prompt_contract
-        prompt += prompt_contract()
-    def checked(raw):
-        lines = _parse_narrations(raw)
-        if lines is not None and current():
-            from src.market_facts import resolve
-            try:
-                lines = [resolve(line, market_data) for line in lines]
-            except Exception:
-                return None
-        return lines
+    prompt = _build_story_prompt(villain, theme, market_data, prev_state, hook_type,
+                                 ending_type, recent_cliffhangers, safe=safe)
     try:
-        client = (make_client(api_key) if current() else genai.Client(api_key=api_key))
-        response = guarded_generate(client, "text", "storyboard",model=STORY_MODEL, contents=prompt)
-        parsed = checked(response.text or "")
+        if safe:
+            return _generate_narrations_safe(make_client(api_key), prompt, villain, hook_type,
+                                             market_data, fallback)
+        client = genai.Client(api_key=api_key)
+        response = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=prompt)
+        parsed = _parse_narrations(response.text or "")
 
         # 훅 길이/형식 제약은 모델이 자주 어긴다(기존 25~45자 요구도 초과한 전례).
         # 실패 시 제약을 더 강하게 재주입해 1회만 재생성한다.
-        if (current() and parsed is None) or (parsed and not is_valid_hook_line(parsed[0], hook_type)):
+        if parsed and not is_valid_hook_line(parsed[0], hook_type):
             logger.warning(
-                "hook_line_rejected len=%s line=%s -- retrying once",
-                len(parsed[0]) if parsed else 0, parsed[0] if parsed else "market_fact_rejected",
+                "hook_line_rejected len=%s line=%s -- retrying once", len(parsed[0]), parsed[0],
             )
             retry_prompt = (
                 prompt
@@ -333,13 +462,13 @@ def _generate_narrations(
                 + ("반드시 '[긴급]' 으로 시작해야 한다. " if hook_type == "D" else "")
                 + "6개 문장 JSON 배열만 출력해라."
             )
-            retry = guarded_generate(client, "text", "storyboard",model=STORY_MODEL, contents=retry_prompt)
-            retried = checked(retry.text or "")
+            retry = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=retry_prompt)
+            retried = _parse_narrations(retry.text or "")
             if retried and is_valid_hook_line(retried[0], hook_type):
                 parsed = retried
-            elif parsed:
+            else:
                 # 나머지 5줄은 살리고 훅만 규칙 문장으로 교체한다
-                parsed[0] = fallback[0] if current() else fallback_hook_line(hook_type, villain, market_data)
+                parsed[0] = fallback_hook_line(hook_type, villain, market_data)
                 logger.warning("hook_line_fallback_applied type=%s", hook_type)
     except ControlError:
         raise

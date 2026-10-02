@@ -11,9 +11,12 @@ from PIL import Image, ImageStat, UnidentifiedImageError
 
 from src.validation import ValidationError
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 EXPECTED_IMAGE_SLOTS = 4
 EXPECTED_NARRATIONS = 6
+# 운영 발행 최소 길이. 6비트 렌더 하한은 훅 3.0초 + 본문 5×3.5초 + 아웃트로 2.0초 = 22.5초이며
+# 폴백 대본(Ep.31·32)이 이 하한 근처로 렌더됐다. 정상 회차(25~45자 문장)는 이보다 길다.
+MIN_PUBLISH_DURATION_SEC = 25.0
 
 
 class ContentQualityError(ValidationError):
@@ -64,8 +67,11 @@ def validate_image_assets(image_paths: list[str | None], *, expected_slots: int 
             raise ContentQualityError(f"scene_{index} 이미지 파일을 읽을 수 없다") from exc
 
 
-def validate_rendered_video(path: str) -> None:
-    """최종 인코딩 결과를 업로드 전에 검사한다. 1분 미만에서 길이 목표는 강제하지 않는다."""
+def validate_rendered_video(path: str, *, min_seconds: float = 0.0) -> None:
+    """최종 인코딩 결과를 업로드 전에 검사한다.
+
+    min_seconds 는 운영 발행 경로에서만 지정한다. 저비용 미리보기(1장면)는 기본값 0을 쓴다.
+    """
     output = Path(path)
     if not output.is_file() or output.stat().st_size <= 0:
         raise ContentQualityError("완성 영상 파일이 없거나 비어 있다")
@@ -82,6 +88,8 @@ def validate_rendered_video(path: str) -> None:
         raise ContentQualityError("완성 영상 메타데이터를 확인할 수 없다") from e
     if not math.isfinite(duration) or not 0 < duration < 60:
         raise ContentQualityError(f"완성 영상 길이가 1분 미만 범위를 벗어났다: {duration}")
+    if duration < min_seconds:
+        raise ContentQualityError(f"완성 영상이 최소 길이 {min_seconds:.1f}초보다 짧다: {duration:.2f}")
     if not any(s.get("codec_type") == "video" and s.get("width") == 1080 and s.get("height") == 1920
                for s in streams):
         raise ContentQualityError("완성 영상의 세로 해상도가 1080x1920이 아니다")

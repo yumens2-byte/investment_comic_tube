@@ -22,6 +22,7 @@ from src.market_regime import select_villain
 from src.quota import is_quota_exhausted
 from src.story import build_storyboard, build_story_state
 from src.goc import build_goc_script
+from src.validation import ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -93,6 +94,11 @@ def generate_connected_script(market_data: dict, *, persist: bool = True, track:
         storyboard, story_state, story_degraded = build_storyboard(
             market_data, villain, theme, prev_state
         )
+        if current() and story_degraded:
+            # 안전 모드 폴백 대본(6문장 7~13자, 약 20초)은 발행하지 않는다 (Ep.31·32 사례).
+            # start_episode 이전이므로 DB 고아 회차와 유료 이미지/TTS 호출이 생기지 않는다.
+            logger.error("story_fallback_blocked reason=%s", story_degraded)
+            raise ValidationError(f"story_fallback_blocked:{story_degraded}")
     story_state["track"] = track
     degraded_reasons = [r for r in (degraded_reason, story_degraded) if r]
 

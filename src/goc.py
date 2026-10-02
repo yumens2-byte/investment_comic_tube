@@ -5,6 +5,7 @@ from __future__ import annotations
 from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
 
 import json
+import logging
 import os
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -13,6 +14,8 @@ from src.db_client import get_client
 from src.drive_manager import EpisodeStateUnavailable, PUBLISHED_STATUSES
 from src.renderer import HOOK_WRAP_CHARS, _wrap_korean
 from src.validation import ValidationError
+
+logger = logging.getLogger(__name__)
 
 GOC_VOICE = "Kore"
 GOC_SCENES = [
@@ -76,11 +79,16 @@ def build_goc_script(event: dict) -> dict:
         "공백을 포함한 첫 문장 전체를 20자 이내, 나머지 각 문장은 40자 이내로 간결하게 작성. "
         "이 사건을 오늘의 신규 시장 데이터라고 말하지 말 것. "
         f"원본 시장 사건 기준 시각(ISO 8601): {event['market_as_of']}; "
-        f"빌런: {event['villain']}; 회차: {event['episode_no']}; 사실 데이터: {json.dumps(values, ensure_ascii=False)}"
+        f"빌런: {event['villain']}; 회차: {event['episode_no']}; "
     )
     if current():
+        # 안전 모드: 원시 수치를 주면 모델이 숫자를 베껴 사실 검사에서 거부된다.
+        # 토큰 목록과 방향 사실만 제공한다.
         from src.market_facts import prompt_contract
-        prompt += prompt_contract()
+        prompt += "사실 데이터는 아래 [수치 규칙]의 토큰으로만 제공된다. 첫 문장에는 토큰과 숫자를 쓰지 않는다."
+        prompt += prompt_contract(snapshot)
+    else:
+        prompt += f"사실 데이터: {json.dumps(values, ensure_ascii=False)}"
     key = os.environ.get("GEMINI_API_KEY")
     if not key:
         raise ValidationError("GOC 대본 API 키 없음")
@@ -104,13 +112,21 @@ def build_goc_script(event: dict) -> dict:
             raise ValidationError("GOC 대본 6비트 불완전")
         if current():
             from src.market_facts import resolve
-            try:
-                narrations = [resolve(line, snapshot) for line in narrations]
-            except ValidationError:
+            fact_problems = []
+            resolved = []
+            for index, line in enumerate(narrations):
+                try:
+                    resolved.append(resolve(line, snapshot))
+                except ValidationError as exc:
+                    fact_problems.append(f"{index + 1}번={exc}")
+                    logger.warning("goc_line_rejected beat=%s reason=%s line=%s", index + 1, exc, line)
+            if fact_problems:
                 if attempt == 1:
-                    raise
-                prompt += " 사실 검증 실패. 숫자·방향을 직접 쓰지 말고 등록 사실 토큰만 사용."
+                    raise ValidationError(f"GOC 사실 검증 실패 {';'.join(fact_problems)}")
+                prompt += (f" 사실 검증 실패: {'; '.join(fact_problems)}. 숫자·%·수량은 토큰으로만 쓰고 "
+                           "토큰 앞뒤에 지표명·상승/하락을 붙이지 말 것. 전체 JSON 배열을 다시 작성.")
                 continue
+            narrations = resolved
         invalid = []
         for index, line in enumerate(narrations):
             try:

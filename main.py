@@ -3,6 +3,7 @@ import sys
 
 from src.collector import fetch_market_data
 from src.content_quality import (
+    MIN_PUBLISH_DURATION_SEC,
     VERSION as QUALITY_VERSION,
     validate_image_assets,
     validate_media_package,
@@ -218,7 +219,7 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
                 raise ValidationError("validated_story_changed")
         reserve("render", "final", script_data)
         video_file = render_video(script_data, scenes=scenes, require_storyboard=True)
-        validate_rendered_video(video_file)
+        validate_rendered_video(video_file, min_seconds=MIN_PUBLISH_DURATION_SEC)
         if not video_pilot:
             update_episode(episode_id, status="rendered", video_path=video_file)
         if not video_pilot:
