@@ -14,7 +14,8 @@ class DailyHeroTest(unittest.TestCase):
         day = date(2026, 9, 30)
         self.assertEqual(select_daily_hero(day), select_daily_hero(day))
         choices = {select_daily_hero(day + timedelta(days=i)) for i in range(60)}
-        self.assertEqual(choices, {"EDT", "GOC"})
+        self.assertEqual(choices, {"EDT"})
+        self.assertEqual(select_daily_hero(), "EDT")
 
     @patch("src.director.start_episode", return_value="ep-30")
     @patch("src.director.build_goc_script")
@@ -40,7 +41,7 @@ class DailyHeroTest(unittest.TestCase):
         self.assertIn("GOC 투자코믹", build_title(metadata))
         self.assertIn("GOC와 함께", build_description(metadata))
 
-    def test_goc_full_pipeline_keeps_duplicate_gate_and_private_metadata(self):
+    def test_edt_full_pipeline_keeps_duplicate_gate_and_public_metadata(self):
         from tests.test_main_pipeline import MARKET, STORYBOARD
         with ExitStack() as stack:
             mocks = {}
@@ -53,11 +54,33 @@ class DailyHeroTest(unittest.TestCase):
                          "record_step_start", "record_step_finish", "update_episode", "validate_image_assets",
                          "validate_rendered_video", *returns):
                 mocks[name] = stack.enter_context(patch(f"main.{name}", return_value=returns.get(name)))
-            self.assertEqual(main.main(track="GOC"), 0)
+            self.assertEqual(main.main(track=select_daily_hero()), 0)
             mocks["validate_not_published_today"].assert_called_once()
-            self.assertEqual(mocks["generate_connected_script"].call_args.kwargs, {"persist": True, "track": "GOC"})
-            self.assertEqual(mocks["synthesize_narrations"].call_args.kwargs["voice_name"], "Kore")
-            self.assertEqual(mocks["upload_to_youtube"].call_args.args[1]["privacy"], "private")
+            self.assertEqual(mocks["generate_connected_script"].call_args.kwargs, {})
+            self.assertNotIn("voice_name", mocks["synthesize_narrations"].call_args.kwargs)
+            self.assertEqual(mocks["upload_to_youtube"].call_args.args[1]["privacy"], "public")
+            self.assertEqual(mocks["upload_to_youtube"].call_args.args[1]["track"], "EDT")
+
+    @patch("main.get_youtube_service")
+    @patch("main.fetch_market_data")
+    def test_goc_production_is_disabled_before_generation(self, market, youtube):
+        with self.assertRaisesRegex(ValueError, "GOC production publication is disabled"):
+            main.main(track="GOC")
+        market.assert_not_called()
+        youtube.assert_not_called()
+
+    @patch.dict("os.environ", {"YOUTUBE_DEFAULT_PRIVACY": "private"})
+    @patch("src.publisher.os.path.exists", return_value=True)
+    @patch("src.publisher.MediaFileUpload")
+    @patch("src.publisher.set_thumbnail")
+    @patch("src.publisher.add_to_playlist")
+    def test_edt_public_metadata_reaches_youtube_request(self, playlist, thumbnail, media, exists):
+        youtube = MagicMock()
+        youtube.videos.return_value.insert.return_value.next_chunk.return_value = (None, {"id": "video-id"})
+        upload_to_youtube("video.mp4", {"privacy": "public", "track": "EDT"}, youtube_service=youtube)
+        status = youtube.videos.return_value.insert.call_args.kwargs["body"]["status"]
+        self.assertEqual(status["privacyStatus"], "public")
+        self.assertNotIn("publishAt", status)
 
     @patch.dict("os.environ", {"YOUTUBE_DEFAULT_PRIVACY": "public"})
     @patch("src.publisher.os.path.exists", return_value=True)

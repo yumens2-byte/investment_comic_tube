@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: '파일럿=저비용 이미지 1장+음성 1개, full=일일 무작위 캐릭터 비공개 발행'
+        description: '파일럿=저비용 이미지 1장+음성 1개, full=EDT 단독 즉시 공개 발행'
         required: true
         type: choice
         default: daily-video-pilot
@@ -82,7 +82,7 @@ jobs:
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           LOG_DIR: logs
-          YOUTUBE_DEFAULT_PRIVACY: private
+          YOUTUBE_DEFAULT_PRIVACY: public
         run: |
           export PYTHONPATH=$(pwd)
           python main.py

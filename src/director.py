@@ -108,7 +108,7 @@ def generate_connected_script(market_data: dict, *, persist: bool = True, track:
 
     script_data = {
         "track": track,
-        "privacy": "private",
+        "privacy": "public" if track == "EDT" else "private",
         "episode": next_ep,
         "villain": villain,
         "theme": theme,

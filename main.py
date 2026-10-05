@@ -108,6 +108,8 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
 def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if track not in ("EDT", "GOC"):
         raise ValueError("unknown hero track")
+    if track == "GOC" and not video_pilot:
+        raise ValueError("GOC production publication is disabled; use a video pilot")
     log_path = configure_logging()
     logger.info("pipeline_started log_file=%s quality_gate=%s video_pilot=%s track=%s", log_path, QUALITY_VERSION, video_pilot, track)
 
@@ -165,7 +167,7 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
                 Path("artifacts/script.json").write_text(json.dumps(script_data, ensure_ascii=False))
                 save("script", "final", script_inputs, "artifacts/script.json")
         script_data["track"] = track
-        script_data["privacy"] = "private"
+        script_data["privacy"] = "private" if video_pilot else "public"
         episode_id = script_data.get("episode_id")
         if script_data.get("degraded_reason"):
             degraded.append(script_data["degraded_reason"])

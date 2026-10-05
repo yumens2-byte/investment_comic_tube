@@ -23,7 +23,7 @@ env_block:
   YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
   SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
   SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-  YOUTUBE_DEFAULT_PRIVACY: private
+  YOUTUBE_DEFAULT_PRIVACY: public
 """
 
 
@@ -43,8 +43,8 @@ class WorkflowConfigCheckTest(unittest.TestCase):
         r = _run_workflow_check(GOOD_WORKFLOW.replace(EXPECTED_CRON, "0 23 * * 1-5"))
         self.assertTrue(any("cron" in f for f in r.failures))
 
-    def test_public_privacy_is_detected(self):
-        r = _run_workflow_check(GOOD_WORKFLOW.replace(EXPECTED_PRIVACY, "public"))
+    def test_private_privacy_is_detected(self):
+        r = _run_workflow_check(GOOD_WORKFLOW.replace(EXPECTED_PRIVACY, "private"))
         self.assertTrue(any("privacy" in f for f in r.failures))
 
     def test_duplicate_cron_is_detected(self):

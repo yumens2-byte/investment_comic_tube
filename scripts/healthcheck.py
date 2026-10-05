@@ -29,7 +29,7 @@ WORKFLOW_PATH = Path(".github/workflows/pipeline.yml")
 
 # 기대 설정값. 운영 정책이 바뀌면 여기만 고친다.
 EXPECTED_CRON = "0 1 * * *"          # 매일 KST 10:00 (UTC 01:00)
-EXPECTED_PRIVACY = "private"
+EXPECTED_PRIVACY = "public"
 EXPECTED_FIRST_EPISODE_BASE = 0      # next_ep = base + 1 이므로 0 이면 1화부터
 
 REQUIRED_SECRETS = [
@@ -99,7 +99,7 @@ def check_workflow_config(r: Report) -> None:
 
     privacy = re.search(r"YOUTUBE_DEFAULT_PRIVACY:\s*(\S+)", text)
     if not privacy:
-        r.fail("privacy", "YOUTUBE_DEFAULT_PRIVACY 미설정 -- 공개 발행 위험")
+        r.fail("privacy", "YOUTUBE_DEFAULT_PRIVACY 미설정 -- 운영 공개 정책 확인 필요")
     elif privacy.group(1) != EXPECTED_PRIVACY:
         r.fail("privacy", f"기대 '{EXPECTED_PRIVACY}' != 실제 '{privacy.group(1)}'")
     else:
