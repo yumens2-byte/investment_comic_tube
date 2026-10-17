@@ -65,8 +65,14 @@ def latest_edt_event(*, today=None, max_age_days: int = 0) -> dict:
 def build_goc_script(event: dict) -> dict:
     """Generate a separate six-beat script; never substitute EDT narration."""
     from google import genai
+    from src.caption_policy import adaptive
 
     snapshot = event["market_snapshot"]
+    if current():
+        from src.script_checkpoint import freeze_context, stable_market
+        freeze_context("goc-event", {"track": "GOC", "market": stable_market(snapshot),
+                                     "episode": event["episode_no"], "villain": event["villain"],
+                                     "market_as_of": event["market_as_of"]})
     values = {key: {field: metric.get(field) for field in ("close", "change_pct")}
               for key, metric in snapshot.items() if isinstance(metric, dict)
               and key in ("TNX", "VIX", "NASDAQ", "SPX", "DXY", "GOLD", "OIL")}
@@ -75,7 +81,9 @@ def build_goc_script(event: dict) -> dict:
         "주인공 GOC(Guardian of Capital)는 같은 시장 사건을 자본 보호와 위험 통제 시점에서 본다. "
         "EDT의 대사나 행동을 복제하지 말고, 노출·비중·손실 한도·방어선·남은 불확실성을 설명한다. "
         "투자 수익 보장, 매수 권유, 제공하지 않은 숫자 금지. 각 장면 한 문장. "
-        "영상 자막 공간 제한: 첫 문장은 한글 13자씩 최대 2줄, 나머지는 19자씩 최대 3줄. "
+        + ("영상 자막 공간 제한: 첫 문장은 한글 13자씩 최대 2줄, 본편은 실제 폰트 폭 기준 3줄 우선·최대 4줄. "
+           if adaptive() else "영상 자막 공간 제한: 첫 문장은 한글 13자씩 최대 2줄, 나머지는 19자씩 최대 3줄. ")
+        +
         "공백을 포함한 첫 문장 전체를 20자 이내, 나머지 각 문장은 40자 이내로 간결하게 작성. "
         "이 사건을 오늘의 신규 시장 데이터라고 말하지 말 것. "
         f"원본 시장 사건 기준 시각(ISO 8601): {event['market_as_of']}; "
@@ -94,8 +102,9 @@ def build_goc_script(event: dict) -> dict:
         raise ValidationError("GOC 대본 API 키 없음")
     client = (make_client(key) if current() else genai.Client(api_key=key))
     for attempt in range(2):
-        response = guarded_generate(client, "text", "goc",
-            model="gemini-3.6-flash", contents=prompt)
+        from src.script_checkpoint import response as text_response
+        response = text_response(client, guarded_generate, "goc", attempt + 1,
+                                 model="gemini-3.6-flash", contents=prompt)
         try:
             narrations = json.loads((response.text or "").strip())
         except (ValueError, AttributeError) as exc:
@@ -130,8 +139,18 @@ def build_goc_script(event: dict) -> dict:
         invalid = []
         for index, line in enumerate(narrations):
             try:
-                _wrap_korean(line.strip(), HOOK_WRAP_CHARS if index == 0 else 19,
-                             max_lines=2 if index == 0 else 3)
+                from src.caption_policy import adaptive
+                if index > 0 and adaptive():
+                    from src.caption_layout import build_layout, fact_phrases, LayoutError
+                    try:
+                        build_layout(line, fact_phrases(snapshot, line))
+                    except LayoutError as exc:
+                        if str(exc) != 'caption_layout_overflow':
+                            raise ControlError(str(exc)) from exc
+                        raise
+                else:
+                    _wrap_korean(line.strip(), HOOK_WRAP_CHARS if index == 0 else 19,
+                                 max_lines=2 if index == 0 else 3)
             except ValueError:
                 invalid.append(index + 1)
         if not invalid:
@@ -143,6 +162,12 @@ def build_goc_script(event: dict) -> dict:
         {"beat": beat, "scene": scene, "narration": line.strip(), "is_hook": idx == 0}
         for idx, ((beat, scene), line) in enumerate(zip(GOC_SCENES, narrations, strict=True))
     ]
+    from src.caption_policy import adaptive
+    if adaptive():
+        from src.caption_layout import build_layout, fact_phrases
+        for beat in storyboard[1:]:
+            beat["caption_layout"] = build_layout(beat["narration"],
+                                                   fact_phrases(snapshot, beat["narration"]))
     return {"track": "GOC", "episode": event["episode_no"], "villain": event["villain"],
             "theme": "같은 시장, 자본 보호의 시점", "market_snapshot": snapshot,
             "storyboard": storyboard, "source_market_as_of": event["market_as_of"]}

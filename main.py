@@ -28,7 +28,7 @@ from src.validation import (
     validate_storyboard,
 )
 
-from src.pipeline_control import protected, current, reserve
+from src.pipeline_control import protected, current, reserve, ControlError
 from src.market_facts import validate_provenance
 
 logger = logging.getLogger(__name__)
@@ -47,6 +47,7 @@ def goc_video_pilot() -> int:
         script = build_goc_script(event)
         storyboard = script["storyboard"]
         validate_storyboard(storyboard)
+        _validate_caption_layouts(storyboard)
         images, _ = generate_scene_images(script, scenes=GOC_IMAGE_SLOTS)
         validate_image_assets(images)
         audio, _ = synthesize_narrations(
@@ -99,9 +100,30 @@ def _build_scenes(storyboard, image_paths, audio_paths) -> list[dict]:
                 # 훅 비트는 renderer 가 전용 연출(펀치인/흔들림/중앙자막/SFX)을 적용한다
                 "is_hook": bool(beat.get("is_hook")),
                 "sfx": beat.get("sfx"),
+                **({"caption_layout": beat["caption_layout"]} if "caption_layout" in beat else {}),
             }
         )
     return scenes
+
+
+def _validate_caption_layouts(storyboard):
+    from src.caption_policy import adaptive
+    if not adaptive():
+        return
+    from src.caption_layout import verify_mask
+    from pathlib import Path
+    import json
+    reports = []
+    directory = Path("artifacts/caption_masks")
+    for index, beat in enumerate(storyboard):
+        if beat.get("is_hook"):
+            continue
+        if "caption_layout" not in beat:
+            raise ValidationError("caption_manifest_missing")
+        layout = beat["caption_layout"]
+        bbox = verify_mask(beat["narration"], layout, directory)
+        reports.append({"beat": index + 1, "layout": layout, "rendered_bbox": bbox, "status": "passed"})
+    (directory / "validation.json").write_text(json.dumps(reports, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 @protected("production")
@@ -122,6 +144,10 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         # 렌더링 환경(한글 폰트) 먼저 확인한다. 두부 자막 영상이 발행되면
         # YouTube에 영구히 남으므로 유료 API를 쓰기 전에 중단하는 것이 싸다.
         validate_render_environment()
+        from src.caption_policy import adaptive, policy_name
+        if adaptive():
+            from src.caption_layout import font_identity
+            font_identity()
         # 같은 날 두 번 돌면 같은 시세로 같은 이야기가 나간다 (Ep.1/Ep.2 사례)
         if not video_pilot:
             validate_not_published_today()
@@ -142,10 +168,17 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
             validate_provenance(market_data)
 
         cached_script = False
-        script_inputs = {"track": track, "market": {key: {f: metric.get(f) for f in
-                         ("close_raw", "prev_close_raw", "observed_date", "source", "source_symbol")}
-                         for key, metric in market_data.items()}}
+        from src.script_checkpoint import stable_market, freeze_context
+        script_inputs = {"schema_version": 2, "track": track, "market": stable_market(market_data),
+                         "caption_policy": policy_name()}
         if current():
+            freeze_context("market", {"track": track, "market": stable_market(market_data)})
+            # Even final-script cache hits must still bind to the preceding story.
+            from src.director import fetch_latest_episode_state, fetch_recent_cliffhangers
+            previous = fetch_latest_episode_state()
+            previous["recent_cliffhangers"] = fetch_recent_cliffhangers(limit=3)
+            freeze_context("generation", {"schema_version": 1, "track": track,
+                                           "market": stable_market(market_data), "previous": previous})
             from src.asset_store import restore
             import json
             from pathlib import Path
@@ -155,9 +188,9 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         else:
             # script 생성 시 episode row가 status=script_ready 로 선기록된다
             if track == "GOC":
-                script_data = generate_connected_script(market_data, persist=not video_pilot, track=track)
+                script_data = generate_connected_script(market_data, persist=not video_pilot and not current(), track=track)
             else:
-                script_data = (generate_connected_script(market_data, persist=False) if video_pilot
+                script_data = (generate_connected_script(market_data, persist=False) if video_pilot or current()
                                else generate_connected_script(market_data))
             if current():
                 from src.asset_store import save
@@ -178,6 +211,10 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
             if script_data.get("story_validation_hash") != fingerprint(storyboard):
                 raise ValidationError("validated_story_changed")
         validate_storyboard(storyboard)
+        _validate_caption_layouts(storyboard)
+        if current() and not video_pilot:
+            episode_id = current().bind_episode(script_data)
+            script_data["episode_id"] = episode_id
         narrations = [beat.get("narration", "") for beat in storyboard]
 
         step = current_step = record_step_start(episode_id, "image") if not video_pilot else None
@@ -267,6 +304,11 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
             except Exception:
                 logger.exception("episode_abort_record_failed")
         return 1
+    except ControlError as e:
+        logger.error("pipeline_control_hold reason=%s details=%s", e, e.details)
+        if current_step:
+            record_step_finish(current_step, "failed", error_code=str(e)[:200])
+        return 1
     except Exception as e:
         logger.exception("pipeline_failed")
         # 실패한 step 을 running 으로 방치하면 관측이 어긋난다 (Ep.1 upload 고아 사례)
@@ -327,11 +369,12 @@ def budget_video_pilot(track=None) -> int:
 
 if __name__ == "__main__":
     modes = {"--video-pilot": lambda: budget_video_pilot("EDT"),
+             "--run-today": lambda: main(track=select_daily_hero()),
              "--goc-video-pilot": lambda: budget_video_pilot("GOC"),
              "--daily-video-pilot": budget_video_pilot,
              "--production-video-pilot": lambda: main(video_pilot=True, track=select_daily_hero())}
     if not sys.argv[1:]:
         raise SystemExit(main(track=select_daily_hero()))
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
-        raise SystemExit("usage: python main.py [--video-pilot|--goc-video-pilot|--daily-video-pilot|--production-video-pilot]")
+        raise SystemExit("usage: python main.py [--run-today|--video-pilot|--goc-video-pilot|--daily-video-pilot|--production-video-pilot]")
     raise SystemExit(modes[sys.argv[1]]())

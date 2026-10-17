@@ -16,6 +16,7 @@ API 미설정/실패/형식 불량 시 규칙 기반 템플릿으로 폴백하�
 from __future__ import annotations
 
 from src.pipeline_control import generate as guarded_generate, current, ControlError, make_client
+from src.validation import ValidationError
 
 import json
 import logging
@@ -281,6 +282,11 @@ def _build_story_prompt(
                         "미치는 인과를 설명하며, ")
         length_rule = ("2~6번 문장은 토큰 대입 후 자막 3줄(한 줄 19자) 안에 들어가야 하므로 "
                        "토큰을 제외한 본문을 15자~30자로 쓴다. 토큰은 한 문장에 최대 2개. ")
+        from src.caption_policy import adaptive
+        if adaptive():
+            length_rule = ("2~6번은 실제 폰트 폭으로 자막을 배치한다. 3줄 우선, 최대 4줄. "
+                           "사실 토큰은 긴 지표명·수치·단위·방향으로 대입되므로 서술부를 간결하게 써라. "
+                           "토큰은 한 문장에 최대 2개이며 수치나 의미를 생략하지 마라. ")
     else:
         tnx = market_data.get("TNX", {}).get("close")
         vix = market_data.get("VIX", {}).get("close")
@@ -347,6 +353,19 @@ def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dic
         return None, str(exc)
     if index == 0 and not is_valid_hook_line(line, hook_type):
         return None, f"hook_length_{HOOK_MIN_CHARS}_{HOOK_MAX_CHARS}_or_format"
+    from src.caption_policy import adaptive
+    if index > 0 and adaptive():
+        from src.caption_layout import build_layout, LayoutError
+        from src.market_facts import TOKEN, fact
+        protected = [fact(m[1], m[2], market_data) for m in TOKEN.finditer(raw_line)]
+        try:
+            build_layout(line, protected)
+        except LayoutError as exc:
+            # Font/config errors are infrastructure failures, not rewrite requests.
+            if str(exc) != "caption_layout_overflow":
+                raise
+            return None, str(exc)
+        return line, None
     width, max_lines = (HOOK_WRAP_CHARS, 2) if index == 0 else (BODY_WRAP_CHARS, BODY_MAX_LINES)
     try:
         _wrap_korean(line, width, max_lines=max_lines)
@@ -377,13 +396,24 @@ def _generate_narrations_safe(
     일일 제어 한도(storyboard 2회) 안에서 동작한다. 수정 후에도 남는 위반 문장이 있으면
     짧은 폴백을 반환하고 사유를 남긴다. 폴백은 director 에서 발행 차단된다.
     """
-    response = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=prompt)
+    from src.script_checkpoint import response as text_response, evaluation
+    response = text_response(client, guarded_generate, "storyboard", 1, model=STORY_MODEL, contents=prompt)
     first_raw = _parse_narrations(response.text or "")
     first, problems = _evaluate_safe(first_raw, hook_type, market_data)
+    evaluation('storyboard', 1, first, problems)
     if not problems:
         return first, None
 
     detail = "; ".join(f"{i + 1}번={reason}" for i, reason in sorted(problems.items()))
+    from src.market_facts import resolve
+    previews = []
+    for i in problems:
+        if first_raw:
+            try:
+                previews.append({"beat": i + 1, "resolved_preview": resolve(first_raw[i], market_data),
+                                 "reason": problems[i]})
+            except ValidationError:
+                pass
     repair_prompt = (
         prompt
         + "\n\n[수정 지시] 직전 응답에서 다음 문장이 규칙을 위반했다: " + detail + ". "
@@ -393,16 +423,20 @@ def _generate_narrations_safe(
         + (f"직전 응답: {json.dumps(first_raw, ensure_ascii=False)}. 위반하지 않은 문장은 그대로 두고 "
            if first_raw else "")
         + "6개 문장 JSON 배열 전체만 다시 출력해라."
+        + "\n실제 대입 문장 진단: " + json.dumps(previews, ensure_ascii=False)
+        + " 위 진단값은 길이 확인용이며 숫자를 복사하지 말고 원래 FACT 토큰으로 출력해라."
+        + " 수치·부호·단위·지표 비교를 보존하며 서술부만 줄여라."
     )
-    retry = guarded_generate(client, "text", "storyboard", model=STORY_MODEL, contents=repair_prompt)
+    retry = text_response(client, guarded_generate, "storyboard", 2, model=STORY_MODEL, contents=repair_prompt)
     second, second_problems = _evaluate_safe(_parse_narrations(retry.text or ""), hook_type, market_data)
+    evaluation('storyboard', 2, second, second_problems)
 
     merged: list[str | None] = []
     for index in range(BEAT_COUNT):
-        if index not in second_problems:
-            merged.append(second[index])
-        elif index not in problems:
+        if index not in problems:
             merged.append(first[index])
+        elif index not in second_problems:
+            merged.append(second[index])
         else:
             merged.append(None)
 
@@ -539,6 +573,13 @@ def build_storyboard(
         {"beat": beat, "scene": scene, "narration": narration}
         for (beat, scene), narration in zip(BEAT_SCENES, narrations, strict=True)
     ]
+    from src.caption_policy import adaptive
+    if adaptive():
+        from src.caption_layout import build_layout, fact_phrases
+        # Protect all facts present in resolved text, including cached responses.
+        for beat in storyboard[1:]:
+            beat["caption_layout"] = build_layout(beat["narration"],
+                                                   fact_phrases(market_data, beat["narration"]))
     # 첫 비트에 훅 메타데이터를 실어 renderer/tts 가 특별 처리하게 한다
     storyboard[0]["is_hook"] = True
     storyboard[0]["hook_type"] = hook_type

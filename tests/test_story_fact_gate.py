@@ -117,6 +117,11 @@ class SafePromptTest(unittest.TestCase):
 @patch("google.genai.Client")
 class SafeNarrationGenerationTest(unittest.TestCase):
     def setUp(self):
+        for target, options in [("src.script_checkpoint.read_json", {"return_value": None}),
+                                ("src.script_checkpoint.write_json", {})]:
+            patcher = patch(target, **options)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.control = Mock()
         self.token = activate(self.control)
         self.addCleanup(reset, self.token)
@@ -194,6 +199,7 @@ class SafeNarrationGenerationTest(unittest.TestCase):
         self.assertEqual(degraded, "story:fact_gate_rejected")
 
 
+@patch("src.script_checkpoint.write_json", new=lambda *args: None)
 class DirectorFallbackBlockTest(unittest.TestCase):
     @patch("src.director.start_episode")
     @patch("src.director.build_storyboard")
@@ -291,6 +297,11 @@ class MinimumDurationTest(unittest.TestCase):
 @patch("google.genai.Client")
 class GocSafePromptTest(unittest.TestCase):
     def setUp(self):
+        for target, options in [("src.script_checkpoint.read_json", {"return_value": None}),
+                                ("src.script_checkpoint.write_json", {})]:
+            patcher = patch(target, **options)
+            patcher.start()
+            self.addCleanup(patcher.stop)
         self.token = activate(Mock())
         self.addCleanup(reset, self.token)
 
