@@ -21,7 +21,15 @@ on:
           - video-pilot
           - goc-video-pilot
           - daily-video-pilot
+          - production-video-pilot
           - full
+      caption_policy:
+        description: '자막 정책: 실영상 검수 전에는 legacy-v1 유지'
+        type: choice
+        default: legacy-v1
+        options:
+          - legacy-v1
+          - caption-layout-v1
 
 jobs:
   build-and-upload:
@@ -31,6 +39,7 @@ jobs:
       OPERATIONAL_SAFETY_ENABLED: ${{ vars.OPERATIONAL_SAFETY_ENABLED || 'true' }}
       PIPELINE_CHANNEL_KEY: ${{ vars.PIPELINE_CHANNEL_KEY || 'EDT_UNIVERSE_INVEST_AREA99' }}
       UPLOAD_SESSION_FERNET_KEY: ${{ secrets.UPLOAD_SESSION_FERNET_KEY }}
+      CAPTION_LAYOUT_POLICY: ${{ inputs.caption_policy || 'legacy-v1' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -52,8 +61,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install reviewed caption font
+        if: inputs.caption_policy == 'caption-layout-v1'
+        run: sudo python3 scripts/install_caption_font.py
+
       - name: Run production-path video pilot
-        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'video-pilot' || inputs.mode == 'daily-video-pilot' || inputs.mode == 'goc-video-pilot')
+        if: github.event_name == 'workflow_dispatch' && (inputs.mode == 'video-pilot' || inputs.mode == 'daily-video-pilot' || inputs.mode == 'goc-video-pilot' || inputs.mode == 'production-video-pilot')
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -85,7 +98,7 @@ jobs:
           YOUTUBE_DEFAULT_PRIVACY: public
         run: |
           export PYTHONPATH=$(pwd)
-          python main.py
+          python main.py --run-today
 
       - name: Upload pipeline diagnostics
         if: always()

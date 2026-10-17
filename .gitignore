@@ -220,3 +220,5 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+# FFmpeg temporary segments (including local regression fixtures).
+_segments/

@@ -73,15 +73,27 @@ def generate_connected_script(market_data: dict, *, persist: bool = True, track:
     logger.info("script_generation_started")
     prev_state = fetch_latest_episode_state()
     prev_state["recent_cliffhangers"] = fetch_recent_cliffhangers(limit=3)
+    if current():
+        from src.script_checkpoint import freeze_context, stable_market
+        freeze_context("generation", {"track": track, "market": stable_market(market_data),
+                                      "previous": prev_state, "schema_version": 1})
     next_ep = prev_state.get("episode", 0) + 1
 
     # 고정 임계값 대신 복합 스코어로 판정한다 (빌런 고착 방지)
     villain, theme, scores = select_villain(market_data, prev_state)
 
     if track == "GOC":
+        as_of = datetime.now(timezone.utc).isoformat()
+        if current():
+            from src.asset_store import read_json, write_json
+            saved = read_json('script-context', 'goc-clock', {'schema_version': 1})
+            if saved is None:
+                write_json('script-context', 'goc-clock', {'schema_version': 1}, {'as_of': as_of})
+            else:
+                as_of = saved['as_of']
         goc = build_goc_script({"episode_no": next_ep, "villain": villain,
                                "market_snapshot": market_data,
-                               "market_as_of": datetime.now(timezone.utc).isoformat()})
+                               "market_as_of": as_of})
         storyboard = goc["storyboard"]
         narration = storyboard[0]["narration"]
         story_state = build_story_state(villain, prev_state,
@@ -90,7 +102,11 @@ def generate_connected_script(market_data: dict, *, persist: bool = True, track:
         degraded_reason = story_degraded = None
     else:
         base_narration = f"오늘 시장 지표 분석 결과, {villain}의 기운이 감지되었다."
-        narration, degraded_reason = _polish_narration(base_narration)
+        if current():
+            # This value is replaced by the validated hook below; no paid polish.
+            narration, degraded_reason = base_narration, None
+        else:
+            narration, degraded_reason = _polish_narration(base_narration)
         storyboard, story_state, story_degraded = build_storyboard(
             market_data, villain, theme, prev_state
         )

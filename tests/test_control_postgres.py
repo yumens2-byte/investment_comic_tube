@@ -9,7 +9,11 @@ from pathlib import Path
 @unittest.skipUnless(os.getenv('TUBE_TEST_POSTGRES')=='1','local PostgreSQL integration opt-in')
 class PostgresControlTest(unittest.TestCase):
     def sql(self,sql):
-        r=subprocess.run(['psql','-h','/tmp/tube-pg-socket','-p','55432','-U','nobody','-d','postgres','-X','-qAt','-v','ON_ERROR_STOP=1','-c',sql],capture_output=True,text=True,check=True)
+        host=os.getenv('TUBE_TEST_PGHOST','/tmp/tube-pg-socket')
+        if host not in ('/tmp/tube-pg-socket','127.0.0.1','localhost'):
+            raise RuntimeError('tests require isolated local PostgreSQL')
+        r=subprocess.run(['psql','-h',host,'-p','55432','-U',os.getenv('TUBE_TEST_PGUSER','nobody'),
+                          '-d',os.getenv('TUBE_TEST_PGDATABASE','postgres'),'-X','-qAt','-v','ON_ERROR_STOP=1','-c',sql],capture_output=True,text=True,check=True)
         return r.stdout.strip()
     @classmethod
     def setUpClass(cls):
@@ -20,10 +24,51 @@ class PostgresControlTest(unittest.TestCase):
                 self.sql(f"create role {role}" + (' bypassrls' if role=='service_role' else '') + ';')
         self.sql("create schema if not exists storage; create table if not exists storage.buckets(id text primary key,name text,public boolean,file_size_limit bigint);")
         self.sql(Path('sql/operational_safety_v1.sql').read_text())
+        self.sql('''create table if not exists public.episodes(id text primary key,episode_no integer unique,
+          revision integer,status text,market_as_of text,villain text,market_snapshot jsonb,story_state jsonb,
+          created_at text,updated_at text); grant select,insert,update on public.episodes to service_role;''')
+        self.sql(Path('sql/caption_recovery_v1.sql').read_text())
     def call(self,action,payload=None,owner='w1',fence=1,day='2026-09-30',group='production'):
         data=json.dumps(payload or {}).replace("'","''")
         return json.loads(self.sql(f"set role service_role; select public.pipeline_control_v1('test','{day}','{group}','{owner}',{fence},'{action}','{data}'::jsonb);"))
-    def setUp(self):self.sql('truncate public.pipeline_slots;')
+    def setUp(self):self.sql('truncate public.pipeline_slots,public.episodes;')
+
+    def bind(self,script=None,owner='w1',fence=1):
+        script=script or {'track':'EDT','episode':45,'villain':'Chaos Reaper',
+                          'market_snapshot':{},'story_state':{},'storyboard':[{'narration':'시장 위험'}]*6}
+        data=json.dumps(script).replace("'","''")
+        return json.loads(self.sql(f"set role service_role; select public.pipeline_bind_episode_v1('test','2026-09-30','production','{owner}',{fence},'{data}'::jsonb);"))
+
+    def test_read_only_status_does_not_claim_slot(self):
+        query="set role service_role; select public.pipeline_status_v1('test','2026-09-30','production');"
+        self.assertFalse(json.loads(self.sql(query))['exists'])
+        self.assertEqual(self.sql('select count(*) from pipeline_slots;'),'0')
+        self.call('claim',{'hero':'EDT'})
+        before=self.sql('select row_to_json(s) from pipeline_slots s;')
+        self.sql(query)
+        self.assertEqual(self.sql('select row_to_json(s) from pipeline_slots s;'),before)
+
+    def test_episode_binding_is_atomic_idempotent_and_fenced(self):
+        self.call('claim',{'hero':'EDT'})
+        self.assertEqual(self.bind(owner='old')['error'],'stale_worker')
+        result=self.bind()
+        self.assertEqual(result,self.bind())
+        self.assertEqual(self.sql('select count(*) from episodes;'),'1')
+        self.call('release');claimed=self.call('claim',{'hero':'EDT'},owner='w2')
+        self.assertEqual(self.bind()['error'],'stale_worker')
+        self.assertEqual(self.bind(owner='w2',fence=claimed['fence']),result)
+
+    def test_binding_rejects_changed_or_deleted_episode(self):
+        self.call('claim',{'hero':'EDT'});self.bind()
+        script={'track':'EDT','episode':45,'villain':'changed','market_snapshot':{},'story_state':{},'storyboard':[{'narration':'시장 위험'}]*6}
+        self.assertEqual(self.bind(script)['error'],'episode_script_changed')
+        self.sql('truncate episodes;')
+        self.assertEqual(self.bind()['error'],'bound_episode_missing')
+
+    def test_caption_functions_are_server_only(self):
+        for role in ('anon','authenticated'):
+            with self.subTest(role=role),self.assertRaises(subprocess.CalledProcessError):
+                self.sql(f"set role {role};select public.pipeline_status_v1('test','2026-09-30','production');")
     def test_retries_persist_and_concurrent_reservations_bounded(self):
         self.call('claim',{'hero':'EDT'})
         def reserve(_):return self.call('reserve',{'stage':'image','asset':'0','input_hash':'x'})

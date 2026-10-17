@@ -13,7 +13,9 @@ _current = contextvars.ContextVar('pipeline_control', default=None)
 
 
 class ControlError(RuntimeError):
-    pass
+    def __init__(self, reason, details=None):
+        super().__init__(reason)
+        self.details = details or {}
 
 
 def enabled():
@@ -44,10 +46,24 @@ class Control:
         except Exception as exc:
             raise ControlError('persistent_control_unavailable') from exc
         if not isinstance(data, dict) or data.get('error'):
-            raise ControlError((data or {}).get('error', 'invalid_control_response'))
+            reason = data.get('error', 'invalid_control_response') if isinstance(data, dict) else 'invalid_control_response'
+            details = {}
+            if reason == 'generation_limit_reached':
+                details = {"day": self.day, **(payload or {})}
+                details.pop('input_hash', None)
+                try:
+                    status = self.status()
+                    details.update(counts=status.get('counts'), limits=status.get('limits'))
+                except ControlError:
+                    pass
+            raise ControlError(reason, details)
         return data
 
     def claim(self):
+        if self.group == 'production':
+            status = self.status()
+            if status.get('version') != 2:
+                raise ControlError('caption_recovery_schema_required')
         result = self.rpc('claim', {'hero': self.hero})
         self.fence = result['fence']
         if self.group == 'production' and result['hero'] != self.hero:
@@ -55,6 +71,8 @@ class Control:
         return result
 
     def reserve(self, stage, asset, value):
+        if self.day != datetime.now(ZoneInfo('Asia/Seoul')).date().isoformat():
+            raise ControlError('historical_generation_forbidden')
         return self.rpc('reserve', {'stage': stage, 'asset': str(asset),
                                    'input_hash': fingerprint(value), 'hero': self.hero})
 
@@ -66,6 +84,32 @@ class Control:
 
     def release(self):
         self.rpc('release')
+
+    def status(self):
+        try:
+            data = get_client().rpc('pipeline_status_v1', {
+                'p_channel': self.channel, 'p_day': self.day, 'p_group': self.group,
+            }).execute().data
+        except Exception as exc:
+            raise ControlError('caption_recovery_schema_required') from exc
+        if not isinstance(data, dict) or data.get('version') != 2:
+            raise ControlError('invalid_control_status')
+        return data
+
+    def bind_episode(self, script):
+        if self.group != 'production':
+            raise ControlError('pilot_episode_write_forbidden')
+        try:
+            data = get_client().rpc('pipeline_bind_episode_v1', {
+                'p_channel': self.channel, 'p_day': self.day, 'p_group': self.group,
+                'p_owner': self.owner, 'p_fence': self.fence, 'p_script': script,
+            }).execute().data
+        except Exception as exc:
+            raise ControlError('episode_binding_unavailable') from exc
+        if not isinstance(data, dict) or not data.get('episode_id') or data.get('error'):
+            raise ControlError(data.get('error', 'episode_binding_invalid') if isinstance(data, dict)
+                               else 'episode_binding_invalid')
+        return data['episode_id']
 
 
 def activate(control):
@@ -134,6 +178,10 @@ def protected(group, forced_hero=None):
                 control.claim()
                 from src.asset_store import verify_store
                 verify_store()
+                from src.caption_policy import adaptive
+                if adaptive():
+                    from src.caption_layout import font_identity
+                    font_identity()
                 worker = threading.Thread(target=heartbeat, daemon=True)
                 worker.start()
                 # Verify encryption configuration before production paid calls.

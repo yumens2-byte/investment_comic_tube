@@ -350,6 +350,9 @@ def check_operational_safety(r: Report) -> None:
             r.fail("operational_upload", "미완료 업로드 원장: 조회/복구 필요")
         else:
             r.ok("operational_safety", "RPC v1/private bucket/encryption/원장 조회 통과")
+        status = Control("production", "EDT").status()
+        r.ok("caption_recovery_schema", "읽기 전용 상태 조회 v2")
+        r.ok("generation_budget", f"KST {status.get('day', 'today')} counts={status.get('counts', {})} limits={status.get('limits', {})}")
     except Exception as exc:
         r.fail("operational_safety", type(exc).__name__)
 

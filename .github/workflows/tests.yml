@@ -1,0 +1,35 @@
+name: Caption and pipeline regression tests
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: test-only-password
+          POSTGRES_DB: tube_tests
+        ports: ['55432:5432']
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TUBE_TEST_POSTGRES: '1'
+      TUBE_TEST_PGHOST: 127.0.0.1
+      TUBE_TEST_PGUSER: postgres
+      TUBE_TEST_PGDATABASE: tube_tests
+      PGPASSWORD: test-only-password
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg fontconfig postgresql-client
+      - run: python -m pip install -r requirements.txt
+      - run: sudo python3 scripts/install_caption_font.py
+      - run: python -m unittest discover -s tests -q

@@ -662,21 +662,31 @@ def _render_segment(
     append: bool,
     zoom_in: bool = True,
     narration_dur: float | None = None,
+    caption_layout: dict | None = None,
 ) -> None:
     """이미지·한국어 자막·내레이션으로 본편 장면 하나를 렌더링한다."""
     if not caption.strip():
         raise ValueError("scene caption is empty")
     caption_file = segment_path.parent / f"caption_{segment_path.stem}.txt"
-    _write_caption_file(caption, caption_file, 19, max_lines=3)
-    font = find_kr_font()
-    if not font:
-        raise ValueError("Korean caption font unavailable")
+    from src.caption_policy import adaptive
+    if adaptive():
+        from src.caption_layout import validate_layout, build_layout, drawtext_filter
+        layout = validate_layout(caption, caption_layout) if caption_layout else build_layout(caption)
+        caption_file.write_text("\n".join(layout["lines"]), encoding="utf-8")
+        caption_filter = drawtext_filter(layout, caption_file)
+    else:
+        _write_caption_file(caption, caption_file, 19, max_lines=3)
+        font = find_kr_font()
+        if not font:
+            raise ValueError("Korean caption font unavailable")
+        caption_filter = (
+            f"drawtext=fontfile='{font}':textfile='{caption_file.as_posix()}':"
+            "expansion=none:fontcolor=white:fontsize=60:borderw=5:bordercolor=black:"
+            "line_spacing=12:x=(w-text_w)/2:y=h*0.68-text_h/2")
     video_filter = (
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
         f"{_ken_burns_filter(duration, zoom_in)},"
-        f"drawtext=fontfile='{font}':textfile='{caption_file.as_posix()}':"
-        "expansion=none:fontcolor=white:fontsize=60:borderw=5:bordercolor=black:"
-        "line_spacing=12:x=(w-text_w)/2:y=h*0.68-text_h/2"
+        f"{caption_filter}"
     )
 
     cmd = ["ffmpeg", "-y", "-loop", "1", "-t", f"{duration:.3f}", "-i", image_path]
@@ -771,6 +781,7 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
             append=bool(segment_paths),
             zoom_in=(idx % 2 == 0),
             narration_dur=narration_dur,
+            caption_layout=scene.get("caption_layout"),
         )
         segment_paths.append(segment_path)
 
