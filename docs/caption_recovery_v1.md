@@ -83,7 +83,7 @@ python scripts/operational_recovery.py invalidate-asset --day YYYY-MM-DD --hero 
 - 현재 개발 환경은 고정 NotoSansCJKkr-Bold OTF와 FFmpeg 6.1.1이다. 실제 모바일 Shorts UI·캐릭터 이미지/무기 가림·TTS 동기와 전체 운영 6비트 영상은 별도 검수 대상이다.
 - Python 전체 테스트는 개발 결과 보고서를 따른다. 로컬 서버 PostgreSQL 전용 테스트는 이 환경의 비루트 프로세스 실행 제한 때문에 건너뛰었다.
 - PGlite PostgreSQL 18.6 호환 엔진에서 신규 SQL·읽기 전용 조회·권한 차단·fence·원자적 연결·한도 보존 18개 검사를 통과했다. 실제 운영 Postgres 17 및 동시성 검증의 대체라고 보지 않는다.
-- PR 회귀 CI는 격리된 Postgres 17 서비스로 기존/신규 서버 통합 테스트를 수행하도록 추가했다. CI 상태가 확인되기 전 통과로 기록하지 않는다.
+- PR 회귀 CI는 격리된 Postgres 17 서비스로 실행했다. 코드 5f5e8ec 기준 [실행 39022445899](https://github.com/yumens2-byte/investment_comic_tube/actions/runs/39022445899)에서 Python 401개 전부 통과(skip 0). 기존/신규 서버 통합 및 동시 예약 상한 검사도 포함한다.
 - 유료 Gemini 생성·운영 DB 변경·오늘 회차 복구·실제 YouTube 업로드는 개발 테스트에서 수행하지 않았다.
 
 ## 롤백

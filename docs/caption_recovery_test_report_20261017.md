@@ -11,7 +11,7 @@
 | 신규 SQL | PGlite PostgreSQL 18.6에서 18개 검사 통과 | 실제 Postgres 17/동시성의 대체가 아님 |
 | 실제 렌더 | FFmpeg 자막 마스크 및 0.5초 MP4 생성 통과 | 합성 배경; 카논·전체 TTS 동기 검증 아님 |
 | 코드 기본 검사 | compileall, git diff --check 통과 | 런타임 운영 검증 아님 |
-| 원격 CI | PR 생성 후 확인 예정 | 통과로 기록하지 않음 |
+| 원격 CI | PostgreSQL 17 서비스에서 401개 전부 통과, skip 0 | [실행 39022445899](https://github.com/yumens2-byte/investment_comic_tube/actions/runs/39022445899), 코드 5f5e8ec |
 
 ## 장애 재현
 
@@ -34,7 +34,7 @@ sql/caption_recovery_v1.sql의 두 함수를 먼저 배포해야 한다. 미배�
 
 ## 남은 검증
 
-- 원격 CI의 PostgreSQL 17 통합·동시 예약 검사 결과 확인.
+- 원격 CI의 PostgreSQL 17 통합·동시 예약 검사는 통과했다. 후속 코드 변경 시 재검증한다.
 - 실제 4개 이미지/6개 TTS 영상과 Shorts 앱 UI 검수.
 - 당시 원본이 저장되지 않은 10/17 회차는 별도 복구 절차 적용 필요.
 - 과거 대본만으로 미디어 전체를 재조립하는 범용 복구 CLI는 이번 구현에 포함하지 않았다.
