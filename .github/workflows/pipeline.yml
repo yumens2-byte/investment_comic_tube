@@ -9,7 +9,8 @@ concurrency:
 
 on:
   schedule:
-    - cron: '0 1 * * *' # 매일 KST 오전 10시 (UTC 01:00)
+    # 정각 예약은 GitHub 스케줄러 혼잡으로 크게 지연된다 (10/22~10/28 실제 시작 05~06시 UTC)
+    - cron: '17 1 * * *' # 매일 KST 오전 10시 17분 (UTC 01:17)
   workflow_dispatch:
     inputs:
       mode:
@@ -33,7 +34,8 @@ on:
 
 jobs:
   build-and-upload:
-    runs-on: ubuntu-latest
+    # ubuntu-latest 는 2026-10-19부터 Ubuntu 26 으로 이전된다. 폰트/FFmpeg 검증 전까지 고정한다
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
       OPERATIONAL_SAFETY_ENABLED: ${{ vars.OPERATIONAL_SAFETY_ENABLED || 'true' }}
@@ -42,10 +44,10 @@ jobs:
       CAPTION_LAYOUT_POLICY: ${{ inputs.caption_policy || 'legacy-v1' }}
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12' # 3.10에서 3.12로 수정
           cache: 'pip'
@@ -100,9 +102,15 @@ jobs:
           export PYTHONPATH=$(pwd)
           python main.py --run-today
 
+      # 실패 로그는 로그인해야 보이지만 annotation 과 summary 는 공개된다.
+      # 중단 사유를 여기로 올려 'exit code 1' 만 보이는 상황을 없앤다.
+      - name: Report pipeline outcome
+        if: always()
+        run: python3 scripts/report_pipeline_outcome.py logs/pipeline.log
+
       - name: Upload pipeline diagnostics
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: pipeline-logs-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

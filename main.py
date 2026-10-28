@@ -166,13 +166,15 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         validate_market_data(market_data)
         if current():
             validate_provenance(market_data)
+            # 같은 날 재시도는 첫 시도에서 동결된 시세를 재사용한다 (2026-10-28 사고)
+            from src.script_checkpoint import pin_market
+            market_data = pin_market(track, market_data)
 
         cached_script = False
         from src.script_checkpoint import stable_market, freeze_context
         script_inputs = {"schema_version": 2, "track": track, "market": stable_market(market_data),
                          "caption_policy": policy_name()}
         if current():
-            freeze_context("market", {"track": track, "market": stable_market(market_data)})
             # Even final-script cache hits must still bind to the preceding story.
             from src.director import fetch_latest_episode_state, fetch_recent_cliffhangers
             previous = fetch_latest_episode_state()
