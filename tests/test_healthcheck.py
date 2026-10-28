@@ -15,7 +15,7 @@ from scripts.healthcheck import (
 GOOD_WORKFLOW = """
 on:
   schedule:
-    - cron: '0 1 * * *'
+    - cron: '17 1 * * *'
 env_block:
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
@@ -49,7 +49,7 @@ class WorkflowConfigCheckTest(unittest.TestCase):
 
     def test_duplicate_cron_is_detected(self):
         text = GOOD_WORKFLOW.replace(
-            "    - cron: '0 1 * * *'",
+            "    - cron: '17 1 * * *'",
             "    - cron: '0 1 * * *'\n    - cron: '0 12 * * *'",
         )
         r = _run_workflow_check(text)
