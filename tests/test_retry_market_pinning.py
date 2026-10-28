@@ -133,6 +133,11 @@ class OutcomeReportTest(unittest.TestCase):
                 text = handle.read()
             self.assertIn('Gemini 한도', text)
 
+    def test_duplicate_publish_hint(self):
+        line = ("2026-10-29T01:20:00Z ERROR src.validation duplicate_publish_blocked "
+                "reason=오늘 이미 발행된 회차가 있다 -- 같은 시세로 중복 발행 방지\n")
+        self.assertEqual(report.hints_for(report.parse([line])), [report.HINTS['duplicate_publish_blocked']])
+
     def test_missing_log_is_not_fatal(self):
         out = io.StringIO()
         with patch('sys.stdout', out):

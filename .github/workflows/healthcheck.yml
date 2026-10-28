@@ -34,13 +34,13 @@ on:
 
 jobs:
   healthcheck:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pipeline.yml 과 동일한 이미지에서 검증한다
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: 'pip'

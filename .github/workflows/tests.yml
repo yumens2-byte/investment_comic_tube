@@ -7,7 +7,7 @@ permissions:
   contents: read
 jobs:
   regression:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04 # pipeline.yml 과 동일한 이미지에서 검증한다
     services:
       postgres:
         image: postgres:17
@@ -24,8 +24,8 @@ jobs:
       TUBE_TEST_PGDATABASE: tube_tests
       PGPASSWORD: test-only-password
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip

@@ -36,7 +36,7 @@ HINTS = {
     "daily_hero_conflict": "오늘 이미 다른 히어로 트랙으로 claim 되었습니다.",
     "upload_unknown_manual_review_required": "업로드 결과가 불명확합니다. YouTube Studio 에서 중복 업로드 여부를 먼저 확인하세요.",
     "generation_limit_reached": "오늘 유료 생성 한도에 도달했습니다. 내일 다시 실행됩니다.",
-    "중복 발행 방지": "오늘 이미 발행된 회차가 있습니다. 재실행이 필요 없습니다.",
+    "duplicate_publish_blocked": "오늘 이미 발행된 회차가 있습니다. 재실행이 필요 없습니다.",
 }
 
 
@@ -56,7 +56,8 @@ def parse(lines):
 
 
 def hints_for(events):
-    text = " ".join(str(e["fields"]) for e in events)
+    # reason 값은 첫 단어까지만 잡히므로 이벤트 이름도 함께 대조한다
+    text = " ".join(f"{e['event']} {e['fields']}" for e in events)
     return [hint for key, hint in HINTS.items() if key in text]
 
 
