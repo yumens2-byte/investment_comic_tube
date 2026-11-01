@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import logging
 
+VERSION = "1.1.0"  # DN2026_0089: 받침 판정 korean_text 위임
+
 logger = logging.getLogger(__name__)
 
 HOOK_A = "A"  # 파격적 충격/경고형
@@ -77,13 +79,12 @@ VILLAIN_KR = {
 
 
 def _has_final_consonant(word: str) -> bool:
-    """한글 마지막 글자에 받침이 있는지 판정한다 (조사 선택용)."""
-    if not word:
-        return False
-    ch = word[-1]
-    if not ("가" <= ch <= "힣"):
-        return False
-    return (ord(ch) - 0xAC00) % 28 != 0
+    """한글 마지막 글자에 받침이 있는지 판정한다 (조사 선택용).
+
+    DN2026_0089: 판정은 src.korean_text 단일 진입점에 위임한다(STD-PROC-13).
+    """
+    from src.korean_text import has_final_consonant
+    return has_final_consonant(word)
 
 
 def subject_particle(word: str) -> str:

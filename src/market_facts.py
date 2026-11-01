@@ -7,6 +7,8 @@ from zoneinfo import ZoneInfo
 from src.validation import ValidationError
 from src.pipeline_control import fingerprint
 
+VERSION = '1.1.0'  # DN2026_0089: resolve 토큰 뒤 조사 받침 보정
+
 KEYS = ('TNX', 'VIX', 'NASDAQ', 'SPX', 'DXY', 'GOLD', 'OIL')
 REQUIRED = KEYS[:5]
 LABELS = {'TNX': '미 10년물 금리', 'VIX': 'VIX', 'NASDAQ': '나스닥',
@@ -137,7 +139,19 @@ def resolve(line, snapshot):
     if reason:
         raise ValidationError(reason)
     line = strip_label_before_fact(line)
-    return TOKEN.sub(lambda m: fact(m[1], m[2], snapshot), line)
+    # DN2026_0089: 대입 문구 받침에 맞춰 토큰 직후 조사를 고친다('상승로' → '상승으로').
+    from src.korean_text import leading_particle, particle_for
+    parts, start = [], 0
+    for match in TOKEN.finditer(line):
+        value = fact(match[1], match[2], snapshot)
+        parts += [line[start:match.start()], value]
+        start = match.end()
+        particle = leading_particle(line[start:])
+        if particle:
+            parts.append(particle_for(value, particle))
+            start += len(particle)
+    parts.append(line[start:])
+    return ''.join(parts)
 
 
 def direction_facts(snapshot):
