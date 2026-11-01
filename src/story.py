@@ -35,6 +35,9 @@ from src.quota import is_quota_exhausted
 
 logger = logging.getLogger(__name__)
 
+# DN2026_0089: 2번 문장 규칙 대체, 자막 보호 구절에 빌런명, 시작 로그 story_gate
+VERSION = "1.1.0"
+
 STORY_MODEL = "gemini-3.6-flash"
 
 # (beat_id, 영어 장면 지시문) -- 이미지 프롬프트에 들어간다
@@ -338,7 +341,38 @@ def _build_story_prompt(
     return prompt
 
 
-def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dict) -> tuple[str | None, str | None]:
+def caption_protected(market_data: dict, line: str, villain: str | None = None) -> list[str]:
+    """자막 배치에서 줄을 나누지 않을 구절: 대입된 사실 + 문장에 실제로 쓰인 빌런명.
+
+    DN2026_0089 F8: 'Chaos / Reaper가' 처럼 고유명사가 줄 사이에서 끊기지 않게 한다.
+    """
+    from src.caption_layout import fact_phrases
+    from src.hooks import VILLAIN_KR
+    names = [n for n in (villain, VILLAIN_KR.get(villain or "")) if n and n in line]
+    return fact_phrases(market_data, line) + names
+
+
+def rule_comparison_line(villain: str, market_data: dict) -> str | None:
+    """2번 문장(시장 상황과 빌런 등장) 규칙 문장. 토큰 원문을 돌려준다.
+
+    DN2026_0089 F1: 모델 문장이 수정 후에도 탈락하면 훅 대체와 같은 방식으로 쓴다.
+    사실 토큰 두 개(금리·VIX)를 비교하고, 등락률이 없으면 수준으로 대체한다.
+    legacy 19자×3줄·caption-layout-v1 모두에 들어가도록 길이를 고정했다.
+    """
+    from src.hooks import VILLAIN_KR, subject_particle
+    tokens = []
+    for key in ("TNX", "VIX"):
+        metric = market_data.get(key) or {}
+        field = "change_pct" if metric.get("change_pct") is not None else "close"
+        if metric.get(field) is None:
+            return None
+        tokens.append(f"{{{{FACT:{key}.{field}}}}}")
+    name = VILLAIN_KR.get(villain, "빌런")
+    return f"{tokens[0]}, {tokens[1]}. {name}{subject_particle(name)} 시장을 흔든다"
+
+
+def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dict,
+                     villain: str | None = None) -> tuple[str | None, str | None]:
     """안전 모드 한 문장 검사. (대입된 문장, 위반 사유) 중 하나를 반환한다."""
     from src.market_facts import check_line, resolve
     from src.renderer import HOOK_WRAP_CHARS, _wrap_korean
@@ -358,6 +392,7 @@ def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dic
         from src.caption_layout import build_layout, LayoutError
         from src.market_facts import TOKEN, fact
         protected = [fact(m[1], m[2], market_data) for m in TOKEN.finditer(raw_line)]
+        protected += [n for n in caption_protected(market_data, line, villain) if n not in protected]
         try:
             build_layout(line, protected)
         except LayoutError as exc:
@@ -374,13 +409,14 @@ def _check_safe_line(index: int, raw_line: str, hook_type: str, market_data: dic
     return line, None
 
 
-def _evaluate_safe(raw_lines: list[str] | None, hook_type: str, market_data: dict):
+def _evaluate_safe(raw_lines: list[str] | None, hook_type: str, market_data: dict,
+                   villain: str | None = None):
     """(문장별 대입 결과 목록, {인덱스: 사유}). 파싱 실패면 전 문장을 실패로 본다."""
     if raw_lines is None:
         return [None] * BEAT_COUNT, {i: "malformed_json" for i in range(BEAT_COUNT)}
     results, problems = [], {}
     for index, raw_line in enumerate(raw_lines):
-        line, reason = _check_safe_line(index, raw_line, hook_type, market_data)
+        line, reason = _check_safe_line(index, raw_line, hook_type, market_data, villain)
         results.append(line)
         if reason:
             problems[index] = reason
@@ -395,11 +431,12 @@ def _generate_narrations_safe(
 
     일일 제어 한도(storyboard 2회) 안에서 동작한다. 수정 후에도 남는 위반 문장이 있으면
     짧은 폴백을 반환하고 사유를 남긴다. 폴백은 director 에서 발행 차단된다.
+    예외: 1번(훅)과 2번(DN2026_0089)은 나머지가 모두 통과했을 때 규칙 문장으로 대체한다.
     """
     from src.script_checkpoint import response as text_response, evaluation
     response = text_response(client, guarded_generate, "storyboard", 1, model=STORY_MODEL, contents=prompt)
     first_raw = _parse_narrations(response.text or "")
-    first, problems = _evaluate_safe(first_raw, hook_type, market_data)
+    first, problems = _evaluate_safe(first_raw, hook_type, market_data, villain)
     evaluation('storyboard', 1, first, problems)
     if not problems:
         return first, None
@@ -428,7 +465,8 @@ def _generate_narrations_safe(
         + " 수치·부호·단위·지표 비교를 보존하며 서술부만 줄여라."
     )
     retry = text_response(client, guarded_generate, "storyboard", 2, model=STORY_MODEL, contents=repair_prompt)
-    second, second_problems = _evaluate_safe(_parse_narrations(retry.text or ""), hook_type, market_data)
+    second, second_problems = _evaluate_safe(_parse_narrations(retry.text or ""), hook_type, market_data,
+                                             villain)
     evaluation('storyboard', 2, second, second_problems)
 
     merged: list[str | None] = []
@@ -444,6 +482,18 @@ def _generate_narrations_safe(
         # 훅은 규칙 문장으로 대체할 수 있다 (프로그램 생성, 길이 보장)
         merged[0] = fallback_hook_line(hook_type, villain, market_data)
         logger.warning("hook_line_fallback_applied type=%s", hook_type)
+    if merged[1] is None and all(line is not None for line in merged[2:]):
+        # DN2026_0089 F1: 2번 문장은 규칙 문장으로 대체한다(10-30·31 실측 탈락 위치).
+        # 규칙 문장도 현재 정책의 같은 검사를 통과해야 쓴다. 3~6번은 대체하지 않으며,
+        # 3~6번이 하나라도 탈락했으면 어차피 차단되므로 대체하지 않는다.
+        raw = rule_comparison_line(villain, market_data)
+        line, reason = _check_safe_line(1, raw, hook_type, market_data, villain) if raw else (None, "facts_missing")
+        if line is not None:
+            merged[1] = line
+            logger.warning("story_line_rule_fallback_applied beat=2 reason=%s",
+                           second_problems.get(1, problems.get(1)))
+        else:
+            logger.warning("story_line_rule_fallback_rejected beat=2 reason=%s", reason)
     missing = [i + 1 for i, line in enumerate(merged) if line is None]
     if missing:
         logger.warning("story_fact_gate_failed beats=%s", missing)
@@ -575,11 +625,12 @@ def build_storyboard(
     ]
     from src.caption_policy import adaptive
     if adaptive():
-        from src.caption_layout import build_layout, fact_phrases
+        from src.caption_layout import build_layout
         # Protect all facts present in resolved text, including cached responses.
+        # DN2026_0089 F8: 빌런명도 줄 사이에서 끊지 않는다.
         for beat in storyboard[1:]:
             beat["caption_layout"] = build_layout(beat["narration"],
-                                                   fact_phrases(market_data, beat["narration"]))
+                                                   caption_protected(market_data, beat["narration"], villain))
     # 첫 비트에 훅 메타데이터를 실어 renderer/tts 가 특별 처리하게 한다
     storyboard[0]["is_hook"] = True
     storyboard[0]["hook_type"] = hook_type

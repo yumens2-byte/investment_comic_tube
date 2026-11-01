@@ -10,6 +10,8 @@ from src.content_quality import (
     validate_rendered_video,
 )
 from src.director import generate_connected_script
+from src.story import VERSION as STORY_GATE_VERSION  # DN2026_0089 시작 로그(STD-DEP-05)
+from src.market_facts import VERSION as FACTS_GATE_VERSION  # DN2026_0089
 from src.daily_hero import select_daily_hero
 from src.market_regime import select_villain
 from src.drive_manager import record_step_finish, record_step_start, update_episode
@@ -133,7 +135,8 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if track == "GOC" and not video_pilot:
         raise ValueError("GOC production publication is disabled; use a video pilot")
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s quality_gate=%s video_pilot=%s track=%s", log_path, QUALITY_VERSION, video_pilot, track)
+    logger.info("pipeline_started log_file=%s quality_gate=%s story_gate=%s facts_gate=%s video_pilot=%s track=%s",
+                log_path, QUALITY_VERSION, STORY_GATE_VERSION, FACTS_GATE_VERSION, video_pilot, track)
 
     episode_id = None
     video_id = None
