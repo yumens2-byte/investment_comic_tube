@@ -41,7 +41,9 @@ jobs:
       OPERATIONAL_SAFETY_ENABLED: ${{ vars.OPERATIONAL_SAFETY_ENABLED || 'true' }}
       PIPELINE_CHANNEL_KEY: ${{ vars.PIPELINE_CHANNEL_KEY || 'EDT_UNIVERSE_INVEST_AREA99' }}
       UPLOAD_SESSION_FERNET_KEY: ${{ secrets.UPLOAD_SESSION_FERNET_KEY }}
-      CAPTION_LAYOUT_POLICY: ${{ inputs.caption_policy || 'legacy-v1' }}
+      # DN2026_0088: 수동 = inputs.caption_policy, 예약 = vars.CAPTION_LAYOUT_POLICY, 둘 다 없으면 legacy-v1.
+      # caption-layout-v1 전환은 production-video-pilot 실영상 검수(회장) 후 Variable로만 한다.
+      CAPTION_LAYOUT_POLICY: ${{ (github.event_name == 'workflow_dispatch' && inputs.caption_policy) || vars.CAPTION_LAYOUT_POLICY || 'legacy-v1' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5
@@ -64,7 +66,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Install reviewed caption font
-        if: inputs.caption_policy == 'caption-layout-v1'
+        if: env.CAPTION_LAYOUT_POLICY == 'caption-layout-v1'  # 예약 실행 Variable 경로도 폰트 설치(DN2026_0088)
         run: sudo python3 scripts/install_caption_font.py
 
       - name: Run production-path video pilot
