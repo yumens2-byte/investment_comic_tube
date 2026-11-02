@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-VERSION = "1.1.0"  # DN2026_0089: 받침 판정 korean_text 위임
+VERSION = "1.2.1"  # DN2026_0092: [긴급] 훅은 실제 등락 폭 기준 충족 시만 (1.1.0 DN2026_0089 받침 판정 위임)
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,20 @@ VILLAIN_PREFERRED_HOOK = {
 # 장기전(같은 빌런 연속 등장)일 때는 속보형으로 전환해 매너리즘을 깬다
 STREAK_THRESHOLD_FOR_URGENT = 3
 
+# DN2026_0092: [긴급] 속보형은 시장이 실제로 크게 움직인 날만 허용한다.
+# Ep.47(S&P +0.28%, 나스닥 -0.02%)·Ep.51(S&P +0.70%)이 연속 빌런·유형 회전만으로
+# "[긴급]"을 달아, 제목·수치와 어긋나는 과장 훅이 나갔다. 기준은 전일 대비 절대 등락률(%).
+URGENT_MIN_ABS_CHANGE = {"SPX": 1.5, "NASDAQ": 1.5, "VIX": 10.0}
+
+
+def is_urgent_market(market_data: dict | None) -> bool:
+    """[긴급] 훅을 쓸 만큼 시장이 움직였는가. 판정 불가(데이터 없음)는 False(과장 금지)."""
+    for key, threshold in URGENT_MIN_ABS_CHANGE.items():
+        change = ((market_data or {}).get(key) or {}).get("change_pct")
+        if isinstance(change, (int, float)) and abs(change) >= threshold:
+            return True
+    return False
+
 # 폴백 훅 문장은 18자 상한이라 영문 빌런명(Debt Titan=10자)을 쓰면 어절이 잘린다.
 # 한글 별칭으로 길이를 확보한다.
 VILLAIN_KR = {
@@ -92,14 +106,24 @@ def subject_particle(word: str) -> str:
     return "이" if _has_final_consonant(word) else "가"
 
 
-def select_hook_type(villain: str, prev_state: dict | None, villain_streak: int) -> str:
-    """이번 회차에 쓸 훅 유형을 결정한다."""
-    if villain_streak >= STREAK_THRESHOLD_FOR_URGENT:
+def select_hook_type(
+    villain: str, prev_state: dict | None, villain_streak: int, market_data: dict | None = None
+) -> str:
+    """이번 회차에 쓸 훅 유형을 결정한다.
+
+    DN2026_0092: market_data 가 [긴급] 기준(URGENT_MIN_ABS_CHANGE)을 못 넘으면
+    연속 빌런·회전 어느 경로로도 HOOK_D 를 고르지 않는다.
+    """
+    urgent_ok = is_urgent_market(market_data)
+    if villain_streak >= STREAK_THRESHOLD_FOR_URGENT and urgent_ok:
         chosen = HOOK_D
         reason = f"streak={villain_streak}"
     else:
         chosen = VILLAIN_PREFERRED_HOOK.get(villain, HOOK_A)
         reason = f"villain={villain}"
+        if villain_streak >= STREAK_THRESHOLD_FOR_URGENT:
+            # DN2026_0092 보완: 연속 빌런 경로에서 [긴급]을 막은 사실도 관측 가능하게 남긴다
+            reason += f", streak={villain_streak}, urgent_blocked=calm_market"
 
     prev_hook = ((prev_state or {}).get("story_state") or {}).get("hook_type")
     if prev_hook and prev_hook == chosen:
@@ -107,6 +131,11 @@ def select_hook_type(villain: str, prev_state: dict | None, villain_streak: int)
         idx = HOOK_TYPES.index(chosen)
         chosen = HOOK_TYPES[(idx + 1) % len(HOOK_TYPES)]
         reason += f", rotated_from={prev_hook}"
+    if chosen == HOOK_D and not urgent_ok:
+        # 회전으로 D 에 걸린 경우: 직전 유형과도 겹치지 않는 다음 비긴급 유형으로 넘긴다
+        calm = [t for t in HOOK_TYPES if t != HOOK_D and t != prev_hook]
+        chosen = calm[0]
+        reason += ", urgent_blocked=calm_market"
 
     logger.info("hook_type_selected type=%s (%s) reason=%s",
                 chosen, HOOK_SPECS[chosen]["name"], reason)
@@ -121,7 +150,10 @@ def is_valid_hook_line(line: str, hook_type: str) -> bool:
     if not (HOOK_MIN_CHARS <= len(text) <= HOOK_MAX_CHARS):
         return False
     # 긴급 속보형은 시그니처 접두사가 곧 유형의 정체성이므로 강제한다
-    return not (hook_type == HOOK_D and not text.startswith("[긴급]"))
+    if hook_type == HOOK_D:
+        return text.startswith("[긴급]")
+    # DN2026_0092 R6-01: 비긴급 유형이 모델 재량으로 '[긴급]'을 쓰는 과장도 막는다
+    return "[긴급]" not in text
 
 
 def fallback_hook_line(hook_type: str, villain: str, market_data: dict) -> str:

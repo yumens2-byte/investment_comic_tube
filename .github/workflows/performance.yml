@@ -1,0 +1,63 @@
+# DN2026_0092 M1 성과 측정 — 발행 영상 YouTube 통계 일별 수집
+#
+# 스크립트: scripts/collect_performance.py (VERSION 은 src/performance.py)
+# 테이블  : public.video_stats (sql/video_stats_v1.sql 선적용 필요, live 모드만 쓰기)
+# 모드    : dry_run / shadow / live — 기본 dry_run, vars.PERFORMANCE_MODE 로 승격
+# 스케줄  : UTC 15:41 = KST 00:41 (정각 회피, STD-SCHED-02)
+
+name: YouTube Performance Collector
+
+"on":
+  schedule:
+    - cron: "41 15 * * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "실행 모드"
+        type: choice
+        options: [dry_run, shadow, live]
+        default: dry_run
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edt-performance-collector
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    # R6-01 W4: 예약 실행은 vars.PERFORMANCE_MODE 등록 후에만(토큰 재발급·수동 dry_run 확인 전 매일 실패 방지)
+    if: github.event_name == 'workflow_dispatch' || vars.PERFORMANCE_MODE != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RUN_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || vars.PERFORMANCE_MODE || 'dry_run' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Collect performance
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: PYTHONPATH=$(pwd) python scripts/collect_performance.py
+
+      - name: Upload rows
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: performance-${{ github.run_id }}
+          path: artifacts/performance_rows.json
+          retention-days: 14
+          if-no-files-found: warn

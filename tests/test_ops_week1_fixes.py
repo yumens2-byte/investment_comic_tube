@@ -180,6 +180,7 @@ class StepFailureRecordingTest(unittest.TestCase):
         for h in logging.getLogger().handlers[:]:
             h.close(); logging.getLogger().removeHandler(h)
 
+    @patch("main.validate_new_market_session")  # DN2026_0092
     @patch("main.validate_not_published_today")
     @patch("main.validate_render_environment")
     @patch("main.record_step_finish")
@@ -191,7 +192,7 @@ class StepFailureRecordingTest(unittest.TestCase):
     @patch("main.generate_connected_script")
     @patch("main.fetch_market_data")
     def test_running_step_marked_failed_on_crash(
-        self, fetch, script, _img, _tts, _render, _upd, _start, finish, _env, _dup
+        self, fetch, script, _img, _tts, _render, _upd, _start, finish, _env, _dup, _session
     ):
         import main
         fetch.return_value = {n: {"close": 1.0, "change_pct": 0.1} for n in ("TNX", "VIX", "NASDAQ", "SPX", "DXY")}

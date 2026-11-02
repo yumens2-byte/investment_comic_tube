@@ -19,12 +19,16 @@ from src.image_generator import generate_scene_images
 from src.goc import GOC_IMAGE_SLOTS, GOC_VOICE, build_goc_script, latest_edt_event
 from src.logging_config import configure_logging
 from src.publisher import get_youtube_service, upload_to_youtube
-from src.renderer import render_video
+from src.renderer import VERSION as RENDER_VERSION, render_video  # DN2026_0092 시작 로그(STD-DEP-05)
+from src.hooks import VERSION as HOOK_VERSION  # DN2026_0092
+from src.validation import VERSION as SESSION_GATE_VERSION  # DN2026_0092
 from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
 from src.validation import (
+    NoNewMarketSession,
     ValidationError,
     validate_market_data,
+    validate_new_market_session,
     validate_not_published_today,
     validate_render_environment,
     validate_storyboard,
@@ -135,8 +139,9 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if track == "GOC" and not video_pilot:
         raise ValueError("GOC production publication is disabled; use a video pilot")
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s quality_gate=%s story_gate=%s facts_gate=%s video_pilot=%s track=%s",
-                log_path, QUALITY_VERSION, STORY_GATE_VERSION, FACTS_GATE_VERSION, video_pilot, track)
+    logger.info("pipeline_started log_file=%s quality_gate=%s story_gate=%s facts_gate=%s render=%s hook=%s session_gate=%s video_pilot=%s track=%s",
+                log_path, QUALITY_VERSION, STORY_GATE_VERSION, FACTS_GATE_VERSION, RENDER_VERSION,
+                HOOK_VERSION, SESSION_GATE_VERSION, video_pilot, track)
 
     episode_id = None
     video_id = None
@@ -167,6 +172,8 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         # 필수 지표가 없으면 여기서 중단한다. start_episode() 이전이므로
         # DB에 고아 회차 row가 남지 않고, YouTube에도 아무것도 올라가지 않는다.
         validate_market_data(market_data)
+        # DN2026_0092: 새로 마감된 미국 거래 세션이 없으면(휴장·주말) 유료 생성 전에 스킵한다
+        validate_new_market_session(market_data, enforce=not video_pilot)
         if current():
             validate_provenance(market_data)
             # 같은 날 재시도는 첫 시도에서 동결된 시세를 재사용한다 (2026-10-28 사고)
@@ -297,6 +304,11 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
         )
         record_step_finish(step, "success" if video_id else "skipped")
         current_step = None
+    except NoNewMarketSession as e:
+        # DN2026_0092: 휴장 스킵은 실패가 아니라 '발행할 새 시세가 없다'는 정상 판단이다.
+        # 회차·step 기록 전이므로 DB 에 남길 것이 없다.
+        logger.info("pipeline_skipped_no_new_session reason=%s", e)
+        return 0
     except ValidationError as e:
         # 검증 실패는 버그가 아니라 '발행하지 않기로 한 정상 판단'이다.
         # traceback 대신 사유만 남기고, 부분 생성물이 있으면 실패로 기록한다.

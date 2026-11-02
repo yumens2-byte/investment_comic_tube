@@ -19,6 +19,8 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"  # DN2026_0092: 로고 투명 판정·같은 이미지 연속 비트 구도 변화
+
 SEGMENT_DURATION_SEC = 5.0
 MIN_SEGMENT_SEC = 3.5
 # 비트별 길이 상한. 내레이션이 길어도 이 이상은 늘어나지 않고 속도로 흡수한다.
@@ -64,6 +66,14 @@ LOGO_CHROMA_BLEND = "0.10"
 KEN_BURNS_FPS = 30
 KEN_BURNS_MAX_ZOOM = 1.12
 KEN_BURNS_SPEED = 0.0012
+# DN2026_0092: 같은 이미지가 연속 비트에 쓰이면 줌 재시작만으로는 컷이 보이지 않아
+# 한 장면이 약 14초 정지된 것처럼 보였다(Ep.47·52·53·54 실측 장면 전환 3~17초).
+# 반복 비트는 확대된 다른 구도(상단·하단)로 잘라 화면을 바꾼다. 추가 이미지 생성 없음.
+REFRAME_START_ZOOM = 1.34
+REFRAME_END_ZOOM = 1.24
+# 초점 y(이미지 높이 비율). 확대 1.24~1.34 에서는 상·하단 엣지로 클램프된다(의도: 위·아래 끝 구도)
+REFRAME_FOCUS_Y = {"upper": 0.30, "lower": 0.62}
+REFRAME_CYCLE = ("upper", "lower")
 
 # --- 오프닝 훅 연출 파라미터 ---
 # 쇼츠 피드에서 스크롤을 멈추게 하는 구간이라 일반 비트와 다른 규칙을 쓴다.
@@ -353,7 +363,23 @@ def _find_brand_asset(stem_is_logo: bool) -> str | None:
 
 
 def _has_alpha_channel(path: str) -> bool:
-    """이미지에 알파 채널이 있는지 확인한다."""
+    """이미지에 실제로 투명한 픽셀이 있는지 확인한다.
+
+    DN2026_0092: pix_fmt 만 보면 RGBA 이지만 전부 불투명한 로고(운영 logo.png,
+    마젠타 배경 알파 255)를 '투명'으로 오판해 키잉을 건너뛰었고, 엔딩에 분홍 사각형이 찍혔다.
+    알파 채널이 있어도 최솟값이 255 면 불투명으로 본다.
+    """
+    try:
+        from PIL import Image
+
+        with Image.open(path) as img:
+            if "A" not in img.getbands() and "transparency" not in img.info:
+                return False
+            alpha = img.convert("RGBA").getchannel("A")
+            low, _high = alpha.getextrema()
+            return low < 255
+    except Exception as exc:  # noqa: BLE001 -- 판정 실패는 ffprobe 로 폴백한다
+        logger.debug("logo_alpha_probe_fallback reason=%s", type(exc).__name__)
     cmd = [
         "ffprobe", "-v", "error",
         "-select_streams", "v:0",
@@ -589,9 +615,26 @@ def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> 
         raise
 
 
-def _ken_burns_filter(duration: float, zoom_in: bool) -> str:
+def _reframe_focus(repeat_index: int) -> str:
+    """같은 이미지의 n번째 연속 사용(0=첫 사용)에 쓸 구도. DN2026_0092."""
+    if repeat_index <= 0:
+        return "center"
+    return REFRAME_CYCLE[(repeat_index - 1) % len(REFRAME_CYCLE)]
+
+
+def _ken_burns_filter(duration: float, zoom_in: bool, focus: str = "center") -> str:
     """장면 길이에 맞춘 zoompan 필터식을 만든다."""
     frames = max(1, int(duration * KEN_BURNS_FPS))
+    if focus in REFRAME_FOCUS_Y:
+        # 확대 상태에서 천천히 빠지며 상단/하단 구도를 보여준다(중앙 구도와 겹치지 않게 하한 유지)
+        speed = max((REFRAME_START_ZOOM - REFRAME_END_ZOOM) / frames, 0.0001)
+        z = f"max({REFRAME_START_ZOOM}-{speed:.6f}*on,{REFRAME_END_ZOOM})"
+        fy = REFRAME_FOCUS_Y[focus]
+        return (
+            f"zoompan=z='{z}':x='iw/2-(iw/zoom/2)':"
+            f"y='max(0,min(ih-ih/zoom,ih*{fy}-ih/zoom/2))':"
+            f"d={frames}:s=1080x1920:fps={KEN_BURNS_FPS}"
+        )
     if zoom_in:
         z = f"min(1+{KEN_BURNS_SPEED}*on,{KEN_BURNS_MAX_ZOOM})"
     else:
@@ -663,6 +706,7 @@ def _render_segment(
     zoom_in: bool = True,
     narration_dur: float | None = None,
     caption_layout: dict | None = None,
+    focus: str = "center",
 ) -> None:
     """이미지·한국어 자막·내레이션으로 본편 장면 하나를 렌더링한다."""
     if not caption.strip():
@@ -685,7 +729,7 @@ def _render_segment(
             "line_spacing=12:x=(w-text_w)/2:y=h*0.68-text_h/2")
     video_filter = (
         "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,"
-        f"{_ken_burns_filter(duration, zoom_in)},"
+        f"{_ken_burns_filter(duration, zoom_in, focus)},"
         f"{caption_filter}"
     )
 
@@ -739,11 +783,16 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
     tmp_dir = Path(output_path).parent / "_segments"
     tmp_dir.mkdir(parents=True, exist_ok=True)
     segment_paths: list[Path] = []
+    previous_image = None
+    repeat_index = 0
 
     for idx, scene in enumerate(scenes):
         image_path = scene.get("image")
         if not image_path:
             continue
+        # DN2026_0092: 직전 장면과 같은 이미지면 구도를 바꾼다(훅은 전용 연출이라 집계만)
+        repeat_index = repeat_index + 1 if image_path == previous_image else 0
+        previous_image = image_path
 
         audio_path = scene.get("audio")
         duration = SEGMENT_DURATION_SEC
@@ -782,7 +831,10 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
             zoom_in=(idx % 2 == 0),
             narration_dur=narration_dur,
             caption_layout=scene.get("caption_layout"),
+            focus=_reframe_focus(repeat_index),
         )
+        if repeat_index:
+            logger.info("segment_reframed idx=%s focus=%s", idx, _reframe_focus(repeat_index))
         segment_paths.append(segment_path)
 
     if not segment_paths:

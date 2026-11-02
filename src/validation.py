@@ -17,6 +17,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"  # DN2026_0092: 휴장 스킵·세션 지연 구분 게이트
+
 # 빌런 판정(market_regime)에 실제로 사용되는 지표. 하나라도 없으면 판정 근거가 무너진다.
 REQUIRED_INDICATORS = ["TNX", "VIX", "NASDAQ", "SPX", "DXY"]
 
@@ -48,6 +50,14 @@ class RenderEnvironmentInvalid(ValidationError):
 
 class DuplicatePublish(ValidationError):
     pass
+
+
+class NoNewMarketSession(ValidationError):
+    """DN2026_0092: 직전 발행 회차 이후 새로 마감된 미국 거래 세션이 없다(휴장·주말)."""
+
+
+class MarketSessionLagging(ValidationError):
+    """DN2026_0092 R6-01 W1: 새 세션이 마감됐는데 수집값이 그 이전 세션이다(폴백 지연). 스킵이 아니라 중단."""
 
 
 def _strict_mode() -> bool:
@@ -186,3 +196,49 @@ def validate_not_published_today() -> None:
         logger.error("duplicate_publish_blocked reason=%s", detail)
         raise DuplicatePublish(detail)
     logger.warning("duplicate_publish_bypassed reason=%s", detail)
+
+
+# DN2026_0092: 세션 날짜는 거래소 마감 지표(SPX → NASDAQ 순)의 observed_date 로 판정한다.
+SESSION_KEYS = ("SPX", "NASDAQ")
+
+
+def market_session_date(snapshot: dict | None) -> str | None:
+    """시장 스냅숏이 어느 미국 거래 세션의 마감값인지(YYYY-MM-DD). 판정 불가면 None."""
+    for key in SESSION_KEYS:
+        metric = (snapshot or {}).get(key)
+        if isinstance(metric, dict) and metric.get("observed_date"):
+            return str(metric["observed_date"])[:10]
+    return None
+
+
+def validate_new_market_session(market_data: dict, *, enforce: bool = True) -> None:
+    """직전 발행 회차와 같은 거래 세션이면 유료 생성 전에 발행을 건너뛴다.
+
+    DN2026_0092: 주말·미국 휴장일에는 같은 금요일 종가로 회차가 반복 발행됐다
+    (Ep.40~42·45~46·49~50·53~54). 회장 결정 '미장 휴장 시 발행 스킵'.
+    판정 불가(세션 날짜 누락)는 기존 검증(provenance)에 맡기고 진행한다.
+    enforce=False(파일럿)는 판정만 기록하고 진행한다.
+    """
+    from src.drive_manager import fetch_latest_episode_state
+
+    current = market_session_date(market_data)
+    previous = market_session_date(fetch_latest_episode_state().get("market_snapshot"))
+    if current is None or previous is None:
+        logger.warning("market_session_unknown current=%s previous=%s -- skip 판정 생략", current, previous)
+        return
+    if current > previous:
+        logger.info("market_session_new current=%s previous=%s", current, previous)
+        return
+    # R6-01 W1: 거래소 달력상 직전 회차 이후 세션이 이미 마감됐다면 휴장이 아니라 데이터 지연이다
+    from src.collector import _last_completed_session
+    completed = _last_completed_session()
+    completed = completed.isoformat() if completed else None
+    if completed and completed > previous:
+        logger.error("market_session_lagging current=%s previous=%s completed=%s", current, previous, completed)
+        raise MarketSessionLagging(
+            f"market_session_lagging current={current} previous={previous} completed={completed}")
+    if not enforce:
+        logger.warning("market_session_repeat_pilot current=%s previous=%s -- 운영이면 발행 스킵", current, previous)
+        return
+    logger.warning("market_session_repeat current=%s previous=%s completed=%s", current, previous, completed)
+    raise NoNewMarketSession(f"no_new_market_session current={current} previous={previous}")
