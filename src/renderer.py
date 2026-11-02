@@ -19,7 +19,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.0"  # DN2026_0092: 로고 투명 판정·같은 이미지 연속 비트 구도 변화
+VERSION = "1.2.0"  # DN2026_0093: 내레이션 자연 속도 우선 구간 연장 (1.1.0 DN2026_0092 로고·구도)
 
 SEGMENT_DURATION_SEC = 5.0
 MIN_SEGMENT_SEC = 3.5
@@ -28,6 +28,14 @@ MIN_SEGMENT_SEC = 3.5
 # 그 비트만 남들의 1.5배가 되어 리듬이 무너졌다.
 MAX_SEGMENT_SEC = 7.0
 SEGMENT_ATEMPO_MAX = 1.6
+# DN2026_0093: 9-30 이후 예약 26회 중 23회가 2번 비트(수치 2개 비교)를 1.21~1.58배로 압축했다
+# (11-01 1.582배 — 상한 1.6 직전). 자연 속도를 우선해 압축은 1.15배까지만 하고,
+# 넘치는 만큼은 그 비트를 최대 10초까지 늘린다. 영상 전체 60초 미만 규칙(content_quality)을
+# 지키려고 회차당 연장 총량을 제한하며, 예산이 바닥나면 기존처럼 압축(≤1.6)으로 흡수한다.
+NATURAL_TEMPO_MAX = 1.15
+STRETCH_SEGMENT_MAX_SEC = 10.0
+STRETCH_TOTAL_BUDGET_SEC = 6.0
+TEMPO_GUARD_SEC = 0.15  # _render_segment 의 tempo = narration / (duration - 0.15) 와 같은 여유
 AUDIO_TAIL_PAD_SEC = 0.6
 
 # Lyria 등 생성 도구가 .mp4 컨테이너로 오디오를 내보내는 경우가 있어 포함한다.
@@ -615,6 +623,22 @@ def _render_text_card(script_data: dict, output_path: str, ffmpeg_log: Path) -> 
         raise
 
 
+def _stretch_for_natural_tempo(idx: int, narration_dur: float, duration: float,
+                               budget: float) -> tuple[float, float]:
+    """압축 배속이 NATURAL_TEMPO_MAX 를 넘으면 예산 안에서 장면을 늘린다. (새 길이, 남은 예산). DN2026_0093."""
+    if narration_dur <= duration + 0.05:
+        return duration, budget
+    wanted = min(STRETCH_SEGMENT_MAX_SEC, narration_dur / NATURAL_TEMPO_MAX + TEMPO_GUARD_SEC)
+    extra = min(max(wanted - duration, 0.0), budget)
+    if extra <= 0:
+        return duration, budget
+    new_duration = duration + extra
+    tempo = narration_dur / (new_duration - TEMPO_GUARD_SEC)
+    logger.info("segment_stretched idx=%s narration=%.2f duration=%.2f->%.2f tempo=%.3f budget_left=%.2f",
+                idx, narration_dur, duration, new_duration, max(tempo, 1.0), budget - extra)
+    return new_duration, budget - extra
+
+
 def _reframe_focus(repeat_index: int) -> str:
     """같은 이미지의 n번째 연속 사용(0=첫 사용)에 쓸 구도. DN2026_0092."""
     if repeat_index <= 0:
@@ -785,6 +809,7 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
     segment_paths: list[Path] = []
     previous_image = None
     repeat_index = 0
+    stretch_left = STRETCH_TOTAL_BUDGET_SEC  # DN2026_0093
 
     for idx, scene in enumerate(scenes):
         image_path = scene.get("image")
@@ -805,6 +830,8 @@ def _render_storyboard(scenes: list[dict], output_path: str, ffmpeg_log: Path,
                 MIN_SEGMENT_SEC,
                 min(MAX_SEGMENT_SEC, narration_dur + AUDIO_TAIL_PAD_SEC),
             )
+            if not scene.get("is_hook"):
+                duration, stretch_left = _stretch_for_natural_tempo(idx, narration_dur, duration, stretch_left)
 
         segment_path = tmp_dir / f"segment_{idx}.mp4"
         if scene.get("is_hook"):
