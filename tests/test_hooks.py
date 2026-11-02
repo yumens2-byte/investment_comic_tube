@@ -43,7 +43,9 @@ class HookTypeSelectionTest(unittest.TestCase):
         self.assertEqual(select_hook_type("Debt Titan", None, 3, BIG_MOVE), HOOK_D)
 
     def test_long_streak_on_calm_market_keeps_villain_type(self):
-        self.assertEqual(select_hook_type("Debt Titan", None, 3, CALM), HOOK_B)
+        with self.assertLogs("src.hooks", level="INFO") as logs:
+            self.assertEqual(select_hook_type("Debt Titan", None, 3, CALM), HOOK_B)
+        self.assertIn("urgent_blocked=calm_market", "".join(logs.output))  # 차단 사유 관측
         self.assertEqual(select_hook_type("Debt Titan", None, 3), HOOK_B)  # 시장 데이터 없음 = 과장 금지
 
     def test_rotation_into_urgent_is_blocked_on_calm_market(self):

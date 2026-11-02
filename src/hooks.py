@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-VERSION = "1.2.0"  # DN2026_0092: [긴급] 훅은 실제 등락 폭 기준 충족 시만 (1.1.0 DN2026_0089 받침 판정 위임)
+VERSION = "1.2.1"  # DN2026_0092: [긴급] 훅은 실제 등락 폭 기준 충족 시만 (1.1.0 DN2026_0089 받침 판정 위임)
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +121,9 @@ def select_hook_type(
     else:
         chosen = VILLAIN_PREFERRED_HOOK.get(villain, HOOK_A)
         reason = f"villain={villain}"
+        if villain_streak >= STREAK_THRESHOLD_FOR_URGENT:
+            # DN2026_0092 보완: 연속 빌런 경로에서 [긴급]을 막은 사실도 관측 가능하게 남긴다
+            reason += f", streak={villain_streak}, urgent_blocked=calm_market"
 
     prev_hook = ((prev_state or {}).get("story_state") or {}).get("hook_type")
     if prev_hook and prev_hook == chosen:
