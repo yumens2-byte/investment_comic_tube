@@ -28,6 +28,8 @@ from src.renderer import (
 )
 
 MARKET = {"TNX": {"close": 4.8}, "VIX": {"close": 15.2}}
+BIG_MOVE = {"SPX": {"change_pct": -1.82}, "NASDAQ": {"change_pct": -2.86}, "VIX": {"change_pct": 12.91}}  # Ep.53
+CALM = {"SPX": {"change_pct": 0.70}, "NASDAQ": {"change_pct": 0.5}, "VIX": {"change_pct": -3.0}}  # Ep.51
 
 
 class HookTypeSelectionTest(unittest.TestCase):
@@ -37,7 +39,28 @@ class HookTypeSelectionTest(unittest.TestCase):
         self.assertEqual(select_hook_type("Bull Brute", None, 1), HOOK_C)
 
     def test_long_streak_switches_to_urgent(self):
-        self.assertEqual(select_hook_type("Debt Titan", None, 3), HOOK_D)
+        # DN2026_0092: 연속 빌런이어도 [긴급]은 큰 등락이 있을 때만
+        self.assertEqual(select_hook_type("Debt Titan", None, 3, BIG_MOVE), HOOK_D)
+
+    def test_long_streak_on_calm_market_keeps_villain_type(self):
+        self.assertEqual(select_hook_type("Debt Titan", None, 3, CALM), HOOK_B)
+        self.assertEqual(select_hook_type("Debt Titan", None, 3), HOOK_B)  # 시장 데이터 없음 = 과장 금지
+
+    def test_rotation_into_urgent_is_blocked_on_calm_market(self):
+        # Ep.51 재현: 직전 C, Bull Brute(C) → 회전 D 였으나 S&P +0.70% 는 [긴급] 아님
+        prev = {"story_state": {"hook_type": HOOK_C}}
+        chosen = select_hook_type("Bull Brute", prev, 1, CALM)
+        self.assertNotIn(chosen, (HOOK_D, HOOK_C))
+        self.assertEqual(select_hook_type("Bull Brute", prev, 1, BIG_MOVE), HOOK_D)
+
+    def test_urgent_market_thresholds(self):
+        from src.hooks import is_urgent_market
+        self.assertFalse(is_urgent_market({"SPX": {"change_pct": 0.28}, "NASDAQ": {"change_pct": -0.02},
+                                           "VIX": {"change_pct": -6.13}}))  # Ep.47 실측
+        self.assertTrue(is_urgent_market({"SPX": {"change_pct": -1.82}}))   # Ep.53 실측
+        self.assertTrue(is_urgent_market({"VIX": {"change_pct": 12.91}}))
+        self.assertFalse(is_urgent_market({"SPX": {"change_pct": None}}))
+        self.assertFalse(is_urgent_market(None))
 
     def test_same_type_as_previous_is_rotated(self):
         prev = {"story_state": {"hook_type": HOOK_B}}

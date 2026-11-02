@@ -50,6 +50,10 @@ class DuplicatePublish(ValidationError):
     pass
 
 
+class NoNewMarketSession(ValidationError):
+    """DN2026_0092: 직전 발행 회차 이후 새로 마감된 미국 거래 세션이 없다(휴장·주말)."""
+
+
 def _strict_mode() -> bool:
     """기본은 엄격 모드. STRICT_VALIDATION=false 로만 완화할 수 있다."""
     return os.getenv("STRICT_VALIDATION", "true").strip().lower() != "false"
@@ -186,3 +190,41 @@ def validate_not_published_today() -> None:
         logger.error("duplicate_publish_blocked reason=%s", detail)
         raise DuplicatePublish(detail)
     logger.warning("duplicate_publish_bypassed reason=%s", detail)
+
+
+# DN2026_0092: 세션 날짜는 거래소 마감 지표(SPX → NASDAQ 순)의 observed_date 로 판정한다.
+SESSION_KEYS = ("SPX", "NASDAQ")
+
+
+def market_session_date(snapshot: dict | None) -> str | None:
+    """시장 스냅숏이 어느 미국 거래 세션의 마감값인지(YYYY-MM-DD). 판정 불가면 None."""
+    for key in SESSION_KEYS:
+        metric = (snapshot or {}).get(key)
+        if isinstance(metric, dict) and metric.get("observed_date"):
+            return str(metric["observed_date"])[:10]
+    return None
+
+
+def validate_new_market_session(market_data: dict, *, enforce: bool = True) -> None:
+    """직전 발행 회차와 같은 거래 세션이면 유료 생성 전에 발행을 건너뛴다.
+
+    DN2026_0092: 주말·미국 휴장일에는 같은 금요일 종가로 회차가 반복 발행됐다
+    (Ep.40~42·45~46·49~50·53~54). 회장 결정 '미장 휴장 시 발행 스킵'.
+    판정 불가(세션 날짜 누락)는 기존 검증(provenance)에 맡기고 진행한다.
+    enforce=False(파일럿)는 판정만 기록하고 진행한다.
+    """
+    from src.drive_manager import fetch_latest_episode_state
+
+    current = market_session_date(market_data)
+    previous = market_session_date(fetch_latest_episode_state().get("market_snapshot"))
+    if current is None or previous is None:
+        logger.warning("market_session_unknown current=%s previous=%s -- skip 판정 생략", current, previous)
+        return
+    if current > previous:
+        logger.info("market_session_new current=%s previous=%s", current, previous)
+        return
+    if not enforce:
+        logger.warning("market_session_repeat_pilot current=%s previous=%s -- 운영이면 발행 스킵", current, previous)
+        return
+    logger.warning("market_session_repeat current=%s previous=%s", current, previous)
+    raise NoNewMarketSession(f"no_new_market_session current={current} previous={previous}")

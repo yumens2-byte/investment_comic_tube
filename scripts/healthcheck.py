@@ -23,7 +23,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"  # DN2026_0092: 신선도는 새 미국 거래 세션 기준(휴장 스킵 반영)
 
 WORKFLOW_PATH = Path(".github/workflows/pipeline.yml")
 
@@ -56,6 +56,29 @@ EXPECTED_MODELS = {
 }
 
 RUNTIME_STALE_HOURS = 30  # 매일 발행이므로 30시간 넘게 신규 회차가 없으면 이상
+# DN2026_0092: 휴장·주말에는 발행을 스킵하므로, 시계는 '새 세션 마감(+정산 여유)' 시점부터 잰다
+SESSION_SETTLE_MINUTES = 75  # src.collector.SESSION_SETTLE_DELAY 와 같은 값
+
+
+def _new_session_available_at(observed_date: str, now: datetime | None = None):
+    """observed_date 이후 처음 마감된 NYSE 세션의 '데이터 사용 가능' 시각(UTC).
+
+    새 세션이 아직 없으면 None, 달력 조회 실패면 예외를 그대로 올린다(호출부가 폴백).
+    """
+    import exchange_calendars as xcals
+    import pandas as pd
+
+    now = now or datetime.now(timezone.utc)
+    calendar = xcals.get_calendar("XNYS")
+    start = pd.Timestamp(observed_date) + pd.Timedelta(days=1)
+    end = pd.Timestamp(now.date())
+    if start > end:
+        return None
+    for session in calendar.sessions_in_range(start, end):
+        ready = calendar.session_close(session).to_pydatetime() + timedelta(minutes=SESSION_SETTLE_MINUTES)
+        if ready <= now:
+            return ready
+    return None
 
 # 검증이 반드시 엄격 모드로 배포돼야 한다. 완화 모드로 배포되면
 # 지표가 비어도 근거 없는 콘텐츠가 발행된다.
@@ -278,7 +301,7 @@ def check_runtime_health(r: Report) -> None:
         client = get_client()
         result = (
             client.table("episodes")
-            .select("episode_no, status, youtube_video_id, degraded_reason, updated_at, villain")
+            .select("episode_no, status, youtube_video_id, degraded_reason, updated_at, villain, market_snapshot")
             .order("episode_no", desc=True)
             .limit(5)
             .execute()
@@ -312,7 +335,26 @@ def check_runtime_health(r: Report) -> None:
 
     # 신선도: 매일 발행이므로 오래 멈춰 있으면 스케줄이 안 도는 것
     updated = latest.get("updated_at")
-    if updated:
+    # DN2026_0092: 새 거래 세션이 없으면(휴장 스킵) 정상, 있으면 그 세션 데이터가 나온 뒤부터 잰다
+    from src.validation import market_session_date
+    observed = market_session_date(latest.get("market_snapshot"))
+    session_checked = False
+    if observed:
+        try:
+            ready = _new_session_available_at(observed)
+            session_checked = True
+            if ready is None:
+                r.ok("runtime_freshness", f"최신 회차 세션 {observed} 이후 새 미국 거래 세션 없음 -- 휴장 스킵 정상")
+            else:
+                waited = datetime.now(timezone.utc) - ready
+                if waited > timedelta(hours=RUNTIME_STALE_HOURS):
+                    r.fail("runtime_freshness", f"새 세션 데이터가 나온 지 {waited.total_seconds() / 3600:.1f}시간째 미발행 "
+                                                f"(최신 회차 세션 {observed}) -- 스케줄 미동작 의심")
+                else:
+                    r.ok("runtime_freshness", f"새 세션 대기 {waited.total_seconds() / 3600:.1f}시간 (최신 회차 세션 {observed})")
+        except Exception as e:  # noqa: BLE001 -- 달력 실패 시 기존 updated_at 기준으로 폴백
+            r.warn("runtime_session_calendar", f"거래 달력 조회 실패({type(e).__name__}) -- updated_at 기준 판정")
+    if updated and not session_checked:
         try:
             ts = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
             age = datetime.now(timezone.utc) - ts

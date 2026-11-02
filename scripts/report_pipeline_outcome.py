@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"  # DN2026_0092: 휴장 스킵 이벤트
 
 LINE = re.compile(r"^(?P<ts>\S+)\s+(?P<level>[A-Z]+)\s+(?P<logger>\S+)\s+(?P<event>[a-z_]+)(?P<rest>.*)$")
 FIELD = re.compile(r"\b(reason|details|changed|status|video_id|reasons|track|video_pilot|beat|beats|type)="
@@ -22,6 +22,8 @@ EVENTS = {
     "pipeline_aborted_validation": ("error", "검증 실패로 발행 중단"),
     "pipeline_control_hold": ("error", "운영 안전장치가 실행을 보류"),
     "duplicate_publish_blocked": ("notice", "오늘 이미 발행됨 -- 중복 발행 방지"),
+    "pipeline_skipped_no_new_session": ("notice", "새 미국 거래 세션 없음(휴장·주말) -- 발행 스킵(DN2026_0092)"),
+    "market_session_repeat_pilot": ("warning", "파일럿: 직전 회차와 같은 세션 -- 운영이면 발행 스킵"),
     "pipeline_failed": ("error", "예외로 실패"),
     "operational_safety_failed": ("error", "운영 안전장치 초기화 실패"),
     "story_generation_aborted": ("warning", "스토리 생성 중단"),

@@ -36,13 +36,16 @@ import argparse
 import os
 import sys
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"  # DN2026_0092: 성과 측정용 Analytics 읽기 스코프 추가
 
 # 업로드 외에 재생목록 추가/썸네일 설정까지 하려면 스코프를 넓혀야 한다.
 # playlistItems.insert 는 youtube.upload 로는 403 이 난다.
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube.force-ssl",
+    # DN2026_0092: 성과 측정 2단계(시청 지속률·engaged views)는 YouTube Analytics API 라
+    # 별도 읽기 스코프가 필요하다. 재동의 1회로 재생목록(force-ssl)과 함께 해결한다.
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
 ]
 
 

@@ -71,6 +71,10 @@ class PipelineOrchestrationTest(unittest.TestCase):
         self.duplicate_check = patch("main.validate_not_published_today")
         self.duplicate_mock = self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)
+        # DN2026_0092: 휴장 스킵 판정은 DB 조회이므로 오케스트레이션 테스트에서는 통과로 고정한다
+        self.session_check = patch("main.validate_new_market_session")
+        self.session_mock = self.session_check.start()
+        self.addCleanup(self.session_check.stop)
         self.video_check = patch("main.validate_rendered_video")
         self.video_check.start()
         self.addCleanup(self.video_check.stop)
@@ -297,6 +301,9 @@ class ValidationAbortTest(unittest.TestCase):
         self.duplicate_check = patch("main.validate_not_published_today")
         self.duplicate_check.start()
         self.addCleanup(self.duplicate_check.stop)
+        self.session_check = patch("main.validate_new_market_session")  # DN2026_0092
+        self.session_check.start()
+        self.addCleanup(self.session_check.stop)
 
     def tearDown(self):
         for handler in logging.getLogger().handlers[:]:

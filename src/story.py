@@ -36,7 +36,7 @@ from src.quota import is_quota_exhausted
 logger = logging.getLogger(__name__)
 
 # DN2026_0089: 2번 문장 규칙 대체, 자막 보호 구절에 빌런명, 시작 로그 story_gate
-VERSION = "1.1.0"
+VERSION = "1.1.1"  # DN2026_0092: 훅 유형 선택에 시장 데이터 전달 (1.1.0 DN2026_0089)
 
 STORY_MODEL = "gemini-3.6-flash"
 
@@ -607,7 +607,7 @@ def build_storyboard(
         prev_streak = prev_story.get("villain_streak")
         streak = (prev_streak + 1) if isinstance(prev_streak, int) else 2
 
-    hook_type = select_hook_type(villain, prev_state, streak)
+    hook_type = select_hook_type(villain, prev_state, streak, market_data)  # DN2026_0092
     ending_type = select_ending_type(prev_state)
     recent_cliffhangers = list(prev.get("recent_cliffhangers") or [])
 

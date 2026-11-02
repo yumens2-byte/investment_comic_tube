@@ -50,7 +50,7 @@ class DailyHeroTest(unittest.TestCase):
                        "generate_scene_images": ([f"i{i}" for i in range(4)], None),
                        "synthesize_narrations": ([f"a{i}" for i in range(6)], None),
                        "render_video": "video.mp4", "upload_to_youtube": "video-id"}
-            for name in ("validate_render_environment", "validate_not_published_today", "get_youtube_service",
+            for name in ("validate_render_environment", "validate_not_published_today", "validate_new_market_session", "get_youtube_service",
                          "record_step_start", "record_step_finish", "update_episode", "validate_image_assets",
                          "validate_rendered_video", *returns):
                 mocks[name] = stack.enter_context(patch(f"main.{name}", return_value=returns.get(name)))
