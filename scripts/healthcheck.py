@@ -58,6 +58,9 @@ EXPECTED_MODELS = {
 RUNTIME_STALE_HOURS = 30  # 매일 발행이므로 30시간 넘게 신규 회차가 없으면 이상
 # DN2026_0092: 휴장·주말에는 발행을 스킵하므로, 시계는 '새 세션 마감(+정산 여유)' 시점부터 잰다
 SESSION_SETTLE_MINUTES = 75  # src.collector.SESSION_SETTLE_DELAY 와 같은 값
+# R6-01 W2: 새 세션 데이터가 나온 뒤(약 22:15 UTC) 정상 발행까지 실측 약 9~10시간이다.
+# 30시간으로 재면 하루 누락을 다음 날 점검에서 놓치므로 18시간으로 잰다.
+SESSION_STALE_HOURS = 18
 
 
 def _new_session_available_at(observed_date: str, now: datetime | None = None):
@@ -347,7 +350,7 @@ def check_runtime_health(r: Report) -> None:
                 r.ok("runtime_freshness", f"최신 회차 세션 {observed} 이후 새 미국 거래 세션 없음 -- 휴장 스킵 정상")
             else:
                 waited = datetime.now(timezone.utc) - ready
-                if waited > timedelta(hours=RUNTIME_STALE_HOURS):
+                if waited > timedelta(hours=SESSION_STALE_HOURS):
                     r.fail("runtime_freshness", f"새 세션 데이터가 나온 지 {waited.total_seconds() / 3600:.1f}시간째 미발행 "
                                                 f"(최신 회차 세션 {observed}) -- 스케줄 미동작 의심")
                 else:

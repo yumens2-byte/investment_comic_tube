@@ -20,6 +20,8 @@ from src.goc import GOC_IMAGE_SLOTS, GOC_VOICE, build_goc_script, latest_edt_eve
 from src.logging_config import configure_logging
 from src.publisher import get_youtube_service, upload_to_youtube
 from src.renderer import VERSION as RENDER_VERSION, render_video  # DN2026_0092 시작 로그(STD-DEP-05)
+from src.hooks import VERSION as HOOK_VERSION  # DN2026_0092
+from src.validation import VERSION as SESSION_GATE_VERSION  # DN2026_0092
 from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
 from src.validation import (
@@ -137,8 +139,9 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if track == "GOC" and not video_pilot:
         raise ValueError("GOC production publication is disabled; use a video pilot")
     log_path = configure_logging()
-    logger.info("pipeline_started log_file=%s quality_gate=%s story_gate=%s facts_gate=%s render=%s video_pilot=%s track=%s",
-                log_path, QUALITY_VERSION, STORY_GATE_VERSION, FACTS_GATE_VERSION, RENDER_VERSION, video_pilot, track)
+    logger.info("pipeline_started log_file=%s quality_gate=%s story_gate=%s facts_gate=%s render=%s hook=%s session_gate=%s video_pilot=%s track=%s",
+                log_path, QUALITY_VERSION, STORY_GATE_VERSION, FACTS_GATE_VERSION, RENDER_VERSION,
+                HOOK_VERSION, SESSION_GATE_VERSION, video_pilot, track)
 
     episode_id = None
     video_id = None

@@ -27,6 +27,8 @@ concurrency:
 
 jobs:
   collect:
+    # R6-01 W4: 예약 실행은 vars.PERFORMANCE_MODE 등록 후에만(토큰 재발급·수동 dry_run 확인 전 매일 실패 방지)
+    if: github.event_name == 'workflow_dispatch' || vars.PERFORMANCE_MODE != ''
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:

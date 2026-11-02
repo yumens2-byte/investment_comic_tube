@@ -6,7 +6,7 @@
 import logging
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,6 +15,7 @@ from PIL import Image
 import main
 from src import renderer
 from src.validation import (
+    MarketSessionLagging,
     NoNewMarketSession,
     market_session_date,
     validate_new_market_session,
@@ -27,10 +28,22 @@ def _snap(day):
 
 
 class MarketSessionSkipTest(unittest.TestCase):
-    def _run(self, current, previous, enforce=True):
+    def _run(self, current, previous, enforce=True, completed=date(2026, 10, 30)):
         with patch("src.drive_manager.fetch_latest_episode_state",
-                   return_value={"market_snapshot": _snap(previous) if previous else None}):
+                   return_value={"market_snapshot": _snap(previous) if previous else None}), \
+             patch("src.collector._last_completed_session", return_value=completed):
             return validate_new_market_session(_snap(current) if current else {}, enforce=enforce)
+
+    def test_lagging_fallback_data_is_error_not_skip(self):
+        # R6-01 W1: 11-02 세션이 마감됐는데 폴백이 10-30 값을 주면 휴장이 아니라 지연 → 중단(exit 1)
+        with self.assertRaises(MarketSessionLagging):
+            self._run("2026-10-30", "2026-10-30", completed=date(2026, 11, 2))
+        with self.assertRaises(MarketSessionLagging):
+            self._run("2026-10-30", "2026-10-30", enforce=False, completed=date(2026, 11, 2))
+
+    def test_calendar_unavailable_keeps_skip(self):
+        with self.assertRaises(NoNewMarketSession):
+            self._run("2026-10-30", "2026-10-30", completed=None)
 
     def test_weekend_repeat_of_friday_session_is_skipped(self):
         # Ep.53(11-01)·Ep.54(11-02) 둘 다 10-30 세션이었다
@@ -81,6 +94,34 @@ class PipelineSkipTest(unittest.TestCase):
         tts.assert_not_called()
         update.assert_not_called()
         step.assert_not_called()
+
+
+class PipelineSessionGateDbFailureTest(unittest.TestCase):
+    """R6-01 제안: 실제 판정 함수 + 직전 회차 조회 실패 → 생성 전 실패(return 1)."""
+
+    def tearDown(self):
+        for handler in logging.getLogger().handlers[:]:
+            handler.close()
+            logging.getLogger().removeHandler(handler)
+
+    @patch("main.generate_connected_script")
+    @patch("src.drive_manager.fetch_latest_episode_state", side_effect=RuntimeError("db down"))
+    @patch("main.fetch_market_data")
+    @patch("main.get_youtube_service")
+    @patch("main.validate_not_published_today")
+    @patch("main.validate_render_environment")
+    def test_state_lookup_failure_aborts_before_generation(self, _env, _dup, _yt, fetch, _state, script):
+        from tests.test_main_pipeline import MARKET
+        fetch.return_value = MARKET
+        self.assertEqual(main.main(track="EDT"), 1)
+        script.assert_not_called()
+
+
+class HookTextTest(unittest.TestCase):
+    def test_non_urgent_type_cannot_use_urgent_prefix(self):
+        from src.hooks import HOOK_A, HOOK_D, is_valid_hook_line
+        self.assertFalse(is_valid_hook_line("[긴급] 시장 경고등 켜졌다", HOOK_A))
+        self.assertTrue(is_valid_hook_line("[긴급] 방어선 붕괴 직전이다", HOOK_D))
 
 
 class LogoTransparencyTest(unittest.TestCase):

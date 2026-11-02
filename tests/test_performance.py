@@ -183,6 +183,7 @@ class CollectMainTest(unittest.TestCase):
         payload = json.loads(self.script.OUTPUT_PATH.read_text(encoding="utf-8"))
         self.assertEqual(payload["mode"], "dry_run")
         self.assertEqual(len(payload["rows"]), 1)
+        self.assertNotIn("video_id", payload["rows"][0])  # R6-01 W3: 공개 아티팩트에 영상 ID 미기록
         self.assertEqual(payload["missing_episode_nos"], [2])
         summary = self.summary.read_text(encoding="utf-8")
         self.assertIn("행 수: 1", summary)

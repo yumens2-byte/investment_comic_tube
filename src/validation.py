@@ -17,6 +17,8 @@ import os
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"  # DN2026_0092: 휴장 스킵·세션 지연 구분 게이트
+
 # 빌런 판정(market_regime)에 실제로 사용되는 지표. 하나라도 없으면 판정 근거가 무너진다.
 REQUIRED_INDICATORS = ["TNX", "VIX", "NASDAQ", "SPX", "DXY"]
 
@@ -52,6 +54,10 @@ class DuplicatePublish(ValidationError):
 
 class NoNewMarketSession(ValidationError):
     """DN2026_0092: 직전 발행 회차 이후 새로 마감된 미국 거래 세션이 없다(휴장·주말)."""
+
+
+class MarketSessionLagging(ValidationError):
+    """DN2026_0092 R6-01 W1: 새 세션이 마감됐는데 수집값이 그 이전 세션이다(폴백 지연). 스킵이 아니라 중단."""
 
 
 def _strict_mode() -> bool:
@@ -223,8 +229,16 @@ def validate_new_market_session(market_data: dict, *, enforce: bool = True) -> N
     if current > previous:
         logger.info("market_session_new current=%s previous=%s", current, previous)
         return
+    # R6-01 W1: 거래소 달력상 직전 회차 이후 세션이 이미 마감됐다면 휴장이 아니라 데이터 지연이다
+    from src.collector import _last_completed_session
+    completed = _last_completed_session()
+    completed = completed.isoformat() if completed else None
+    if completed and completed > previous:
+        logger.error("market_session_lagging current=%s previous=%s completed=%s", current, previous, completed)
+        raise MarketSessionLagging(
+            f"market_session_lagging current={current} previous={previous} completed={completed}")
     if not enforce:
         logger.warning("market_session_repeat_pilot current=%s previous=%s -- 운영이면 발행 스킵", current, previous)
         return
-    logger.warning("market_session_repeat current=%s previous=%s", current, previous)
+    logger.warning("market_session_repeat current=%s previous=%s completed=%s", current, previous, completed)
     raise NoNewMarketSession(f"no_new_market_session current={current} previous={previous}")

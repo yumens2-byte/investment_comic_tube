@@ -71,6 +71,7 @@ KEN_BURNS_SPEED = 0.0012
 # 반복 비트는 확대된 다른 구도(상단·하단)로 잘라 화면을 바꾼다. 추가 이미지 생성 없음.
 REFRAME_START_ZOOM = 1.34
 REFRAME_END_ZOOM = 1.24
+# 초점 y(이미지 높이 비율). 확대 1.24~1.34 에서는 상·하단 엣지로 클램프된다(의도: 위·아래 끝 구도)
 REFRAME_FOCUS_Y = {"upper": 0.30, "lower": 0.62}
 REFRAME_CYCLE = ("upper", "lower")
 

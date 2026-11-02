@@ -147,7 +147,10 @@ def is_valid_hook_line(line: str, hook_type: str) -> bool:
     if not (HOOK_MIN_CHARS <= len(text) <= HOOK_MAX_CHARS):
         return False
     # 긴급 속보형은 시그니처 접두사가 곧 유형의 정체성이므로 강제한다
-    return not (hook_type == HOOK_D and not text.startswith("[긴급]"))
+    if hook_type == HOOK_D:
+        return text.startswith("[긴급]")
+    # DN2026_0092 R6-01: 비긴급 유형이 모델 재량으로 '[긴급]'을 쓰는 과장도 막는다
+    return "[긴급]" not in text
 
 
 def fallback_hook_line(hook_type: str, villain: str, market_data: dict) -> str:

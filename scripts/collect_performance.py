@@ -144,9 +144,11 @@ def main() -> int:
     else:
         logger.info("performance_db_write_skipped mode=%s rows=%d", mode, len(rows))
 
+    # R6-01 W3: 공개 레포 아티팩트이므로 video_id 는 빼고 episode_no 로만 남긴다(DB 행에는 유지)
+    public_rows = [{k: v for k, v in r.items() if k != "video_id"} for r in rows]
     path = _write_json({
         "version": VERSION, "mode": mode, "collected_date": collected_date,
-        "rows": rows, "missing_episode_nos": missing,
+        "rows": public_rows, "missing_episode_nos": missing,
     })
     logger.info("performance_rows_written path=%s", path)
 
