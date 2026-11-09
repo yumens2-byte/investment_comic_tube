@@ -19,7 +19,7 @@ grant execute on function public.pipeline_status_v1(text,date,text) to service_r
 create or replace function public.pipeline_bind_episode_v1(
  p_channel text,p_day date,p_group text,p_owner text,p_fence bigint,p_script jsonb)
 returns jsonb language plpgsql security invoker set search_path = '' as $$
-declare r public.pipeline_slots; binding jsonb; ep text; number int; stamp text; digest text;
+declare r public.pipeline_slots; binding jsonb; ep text; number int; stamp text; digest text; old record;
 begin
  if p_group <> 'production' then return jsonb_build_object('error','pilot_episode_write_forbidden'); end if;
  perform pg_advisory_xact_lock(hashtextextended(p_channel,0));
@@ -46,8 +46,22 @@ begin
  end if;
  number:=(p_script->>'episode')::int;
  if number is null or number<1 then return jsonb_build_object('error','invalid_episode_number'); end if;
- if exists(select 1 from public.episodes where episode_no=number) then
-  return jsonb_build_object('error','episode_number_conflict'); end if;
+ -- DN2026_0110: 미발행 실패 회차가 번호를 점유하면 다음 번호(발행 기준)가 매일 충돌한다
+ -- (11-06 Ep.58 aborted_validation → 11-07~09 연속 episode_number_conflict).
+ -- drive_manager._reclaim_failed_episode 와 같은 규칙으로, 발행·업로드·진행 중 흔적이 없는 행만 회수한다.
+ for old in select e.id,e.status,to_jsonb(e)->>'youtube_video_id' as video
+   from public.episodes e where e.episode_no=number for update loop
+  if old.status in ('published','published_degraded') or old.video is not null
+     or exists(select 1 from public.pipeline_slots s where s.upload->>'episode_id'=old.id)
+     or exists(select 1 from public.pipeline_slots s
+               where s.assets->'episode:binding'->>'episode_id'=old.id
+                 and s.lease_until is not null and s.lease_until>now()) then
+   return jsonb_build_object('error','episode_number_conflict');
+  end if;
+  delete from public.step_runs where episode_id=old.id;
+  delete from public.episodes where id=old.id;
+  raise log 'pipeline_bind_episode_v1 reclaimed episode_no=% old_id=% old_status=%',number,old.id,old.status;
+ end loop;
  ep:='ep-'||lpad(number::text,4,'0')||'-'||substr(md5(p_channel||p_day::text||p_group),1,8);
  stamp:=to_char(now() at time zone 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US')||'+00:00';
  insert into public.episodes(id,episode_no,revision,status,market_as_of,villain,market_snapshot,story_state,created_at,updated_at)

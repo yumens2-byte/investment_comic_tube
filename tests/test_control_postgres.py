@@ -26,12 +26,16 @@ class PostgresControlTest(unittest.TestCase):
         self.sql(Path('sql/operational_safety_v1.sql').read_text())
         self.sql('''create table if not exists public.episodes(id text primary key,episode_no integer unique,
           revision integer,status text,market_as_of text,villain text,market_snapshot jsonb,story_state jsonb,
-          created_at text,updated_at text); grant select,insert,update on public.episodes to service_role;''')
+          created_at text,updated_at text); grant select,insert,update,delete on public.episodes to service_role;''')
+        # DN2026_0110: 실패 회차 회수는 step_runs 도 함께 정리한다(운영 스키마와 같은 이름의 최소 테이블).
+        self.sql('''create table if not exists public.step_runs(id bigserial primary key,episode_id text,step text,
+          status text); grant select,insert,update,delete on public.step_runs to service_role;
+          grant usage on all sequences in schema public to service_role;''')
         self.sql(Path('sql/caption_recovery_v1.sql').read_text())
     def call(self,action,payload=None,owner='w1',fence=1,day='2026-09-30',group='production'):
         data=json.dumps(payload or {}).replace("'","''")
         return json.loads(self.sql(f"set role service_role; select public.pipeline_control_v1('test','{day}','{group}','{owner}',{fence},'{action}','{data}'::jsonb);"))
-    def setUp(self):self.sql('truncate public.pipeline_slots,public.episodes;')
+    def setUp(self):self.sql('truncate public.pipeline_slots,public.episodes,public.step_runs;')
 
     def bind(self,script=None,owner='w1',fence=1):
         script=script or {'track':'EDT','episode':45,'villain':'Chaos Reaper',
@@ -64,6 +68,50 @@ class PostgresControlTest(unittest.TestCase):
         self.assertEqual(self.bind(script)['error'],'episode_script_changed')
         self.sql('truncate episodes;')
         self.assertEqual(self.bind()['error'],'bound_episode_missing')
+
+    def _seed_episode(self,status,ep_id='ep-0045-old',video=None):
+        self.sql(f"insert into episodes(id,episode_no,revision,status) values('{ep_id}',45,1,'{status}');"
+                 f"insert into step_runs(episode_id,step,status) values('{ep_id}','tts','skipped');")
+
+    def test_failed_episode_number_is_reclaimed_on_bind(self):
+        # DN2026_0110: 11-06 Ep.58 aborted_validation 이 11-07~09 바인딩을 막은 사례
+        for status in ('aborted_validation','failed','script_ready','rendered_no_upload'):
+            with self.subTest(status=status):
+                self.sql('truncate pipeline_slots,episodes,step_runs;')
+                self._seed_episode(status)
+                self.call('claim',{'hero':'EDT'})
+                result=self.bind()
+                self.assertIn('episode_id',result,result)
+                self.assertEqual(self.sql("select count(*) from episodes where id='ep-0045-old';"),'0')
+                self.assertEqual(self.sql("select count(*) from step_runs where episode_id='ep-0045-old';"),'0')
+                self.assertEqual(self.sql('select count(*) from episodes where episode_no=45;'),'1')
+
+    def test_published_or_uploaded_episode_number_stays_conflict(self):
+        for status in ('published','published_degraded'):
+            with self.subTest(status=status):
+                self.sql('truncate pipeline_slots,episodes,step_runs;')
+                self._seed_episode(status)
+                self.call('claim',{'hero':'EDT'})
+                self.assertEqual(self.bind()['error'],'episode_number_conflict')
+                self.assertEqual(self.sql("select status from episodes where id='ep-0045-old';"),status)
+        # 업로드 영수증이 남은 미발행 회차도 회수하지 않는다
+        self.sql('truncate pipeline_slots,episodes,step_runs;')
+        self._seed_episode('aborted_validation')
+        self.call('claim',{'hero':'EDT'},day='2026-09-29')
+        self.sql("update pipeline_slots set upload=jsonb_build_object('episode_id','ep-0045-old') where kst_date='2026-09-29';")
+        self.call('claim',{'hero':'EDT'})
+        self.assertEqual(self.bind()['error'],'episode_number_conflict')
+        self.assertEqual(self.sql("select count(*) from step_runs where episode_id='ep-0045-old';"),'1')
+
+    def test_in_flight_episode_number_is_not_reclaimed(self):
+        self._seed_episode('script_ready')
+        self.call('claim',{'hero':'EDT'},day='2026-09-29',owner='other')
+        self.sql("""update pipeline_slots set assets=assets||jsonb_build_object('episode:binding',
+                    jsonb_build_object('episode_id','ep-0045-old','script_digest','x')),
+                    lease_until=now()+interval '5 minutes' where kst_date='2026-09-29';""")
+        self.call('claim',{'hero':'EDT'})
+        self.assertEqual(self.bind()['error'],'episode_number_conflict')
+        self.assertEqual(self.sql("select count(*) from episodes where id='ep-0045-old';"),'1')
 
     def test_caption_functions_are_server_only(self):
         for role in ('anon','authenticated'):
