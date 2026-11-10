@@ -11,6 +11,9 @@ on:
   schedule:
     # 정각 예약은 GitHub 스케줄러 혼잡으로 크게 지연된다 (10/22~10/28 실제 시작 05~06시 UTC)
     - cron: '17 1 * * *' # 매일 KST 오전 10시 17분 (UTC 01:17)
+    # DN2026_0113: 예비 예약. 본 예약이 GitHub 에서 누락된 날(11-10)만 대신 실행하고,
+    # 오늘 발행·슬롯 흔적이 있으면 스스로 스킵한다(실패 회차 재시도 아님). 미국 D-1일 휴장이면 둘 다 스킵.
+    - cron: '47 9 * * *' # 매일 KST 18시 47분 (UTC 09:47)
   workflow_dispatch:
     inputs:
       mode:
@@ -44,6 +47,8 @@ jobs:
       # DN2026_0088: 수동 = inputs.caption_policy, 예약 = vars.CAPTION_LAYOUT_POLICY, 둘 다 없으면 legacy-v1.
       # caption-layout-v1 전환은 production-video-pilot 실영상 검수(회장) 후 Variable로만 한다.
       CAPTION_LAYOUT_POLICY: ${{ (github.event_name == 'workflow_dispatch' && inputs.caption_policy) || vars.CAPTION_LAYOUT_POLICY || 'legacy-v1' }}
+      # DN2026_0113: 예비 cron 으로 발화한 실행만 backup. 수동·본 예약은 primary.
+      PIPELINE_SCHEDULE_ROLE: ${{ github.event_name == 'schedule' && github.event.schedule == '47 9 * * *' && 'backup' || 'primary' }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v5

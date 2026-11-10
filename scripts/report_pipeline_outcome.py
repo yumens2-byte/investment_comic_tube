@@ -12,7 +12,7 @@ import os
 import re
 import sys
 
-VERSION = "1.2.0"  # DN2026_0092: 휴장 스킵 이벤트
+VERSION = "1.3.0"  # DN2026_0113: 미장 휴일 진입 스킵·예비 예약 이벤트 (1.2.0 DN2026_0092)
 
 LINE = re.compile(r"^(?P<ts>\S+)\s+(?P<level>[A-Z]+)\s+(?P<logger>\S+)\s+(?P<event>[a-z_]+)(?P<rest>.*)$")
 FIELD = re.compile(r"\b(reason|details|changed|status|video_id|reasons|track|video_pilot|beat|beats|type)="
@@ -23,6 +23,10 @@ EVENTS = {
     "pipeline_control_hold": ("error", "운영 안전장치가 실행을 보류"),
     "duplicate_publish_blocked": ("notice", "오늘 이미 발행됨 -- 중복 발행 방지"),
     "pipeline_skipped_no_new_session": ("notice", "새 미국 거래 세션 없음(휴장·주말) -- 발행 스킵(DN2026_0092)"),
+    "pipeline_skipped_us_market_holiday": ("notice", "미국 D-1일 휴장(주말·공휴일) -- 실행 스킵(DN2026_0113)"),
+    "pipeline_skipped_backup_not_needed": ("notice", "예비 예약: 오늘 본 실행 흔적 있음 -- 스킵(DN2026_0113)"),
+    "backup_run_started": ("warning", "예비 예약: 본 예약 미도착으로 대신 실행(DN2026_0113)"),
+    "backup_gate_check_failed": ("error", "예비 예약: 본 실행 여부 판정 실패 -- 중복 과금 방지로 중단"),
     "market_session_repeat_pilot": ("warning", "파일럿: 직전 회차와 같은 세션 -- 운영이면 발행 스킵"),
     "pipeline_failed": ("error", "예외로 실패"),
     "operational_safety_failed": ("error", "운영 안전장치 초기화 실패"),
