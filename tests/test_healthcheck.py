@@ -16,7 +16,9 @@ GOOD_WORKFLOW = """
 on:
   schedule:
     - cron: '17 1 * * *'
+    - cron: '47 9 * * *'
 env_block:
+  PIPELINE_SCHEDULE_ROLE: ${{ github.event_name == 'schedule' && github.event.schedule == '47 9 * * *' && 'backup' || 'primary' }}
   GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
   YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
   YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
@@ -50,10 +52,18 @@ class WorkflowConfigCheckTest(unittest.TestCase):
     def test_duplicate_cron_is_detected(self):
         text = GOOD_WORKFLOW.replace(
             "    - cron: '17 1 * * *'",
-            "    - cron: '0 1 * * *'\n    - cron: '0 12 * * *'",
+            "    - cron: '17 1 * * *'\n    - cron: '0 1 * * *'\n    - cron: '0 12 * * *'",
         )
         r = _run_workflow_check(text)
         self.assertTrue(any("중복 실행" in f for f in r.failures))
+
+    def test_dn2026_0113_missing_backup_cron_is_detected(self):
+        r = _run_workflow_check(GOOD_WORKFLOW.replace("    - cron: '47 9 * * *'\n", ""))
+        self.assertTrue(any("cron" in f for f in r.failures))
+
+    def test_dn2026_0113_backup_cron_without_role_is_detected(self):
+        r = _run_workflow_check(GOOD_WORKFLOW.replace("&& 'backup'", "&& 'primary'"))
+        self.assertTrue(any("cron_backup_role" in f for f in r.failures))
 
     def test_missing_secret_wiring_is_detected(self):
         r = _run_workflow_check(GOOD_WORKFLOW.replace("secrets.SUPABASE_URL", "secrets.WRONG"))
