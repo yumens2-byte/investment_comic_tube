@@ -17,7 +17,7 @@ import os
 
 logger = logging.getLogger(__name__)
 
-VERSION = "1.1.0"  # DN2026_0092: 휴장 스킵·세션 지연 구분 게이트
+VERSION = "1.2.0"  # DN2026_0113: KST D일 → 미국 D-1일 휴장 시 진입 스킵 (1.1.0 DN2026_0092)
 
 # 빌런 판정(market_regime)에 실제로 사용되는 지표. 하나라도 없으면 판정 근거가 무너진다.
 REQUIRED_INDICATORS = ["TNX", "VIX", "NASDAQ", "SPX", "DXY"]
@@ -54,6 +54,10 @@ class DuplicatePublish(ValidationError):
 
 class NoNewMarketSession(ValidationError):
     """DN2026_0092: 직전 발행 회차 이후 새로 마감된 미국 거래 세션이 없다(휴장·주말)."""
+
+
+class UsMarketHoliday(NoNewMarketSession):
+    """DN2026_0113: KST D일 회차가 다룰 미국 D-1일이 휴장(주말·공휴일)이다."""
 
 
 class MarketSessionLagging(ValidationError):
@@ -242,3 +246,37 @@ def validate_new_market_session(market_data: dict, *, enforce: bool = True) -> N
         return
     logger.warning("market_session_repeat current=%s previous=%s completed=%s", current, previous, completed)
     raise NoNewMarketSession(f"no_new_market_session current={current} previous={previous}")
+
+
+def us_session_day_for(now=None):
+    """DN2026_0113: KST D일 실행이 발행할 미국 세션의 달력 날짜(D-1)."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    seoul = ZoneInfo("Asia/Seoul")
+    kst_day = (now or datetime.now(seoul)).astimezone(seoul).date()
+    return kst_day, kst_day - timedelta(days=1)
+
+
+def validate_us_session_day(now=None) -> None:
+    """미국 D-1일이 뉴욕증시(XNYS) 휴장이면 UsMarketHoliday 로 진입 자체를 건너뛴다.
+
+    DN2026_0113(회장 결정 '미장 휴일에는 동작 안 함'): 기존 세션 게이트(validate_new_market_session)는
+    직전 '발행' 회차와 비교하므로, 앞 회차가 실패하면 주말에도 금요일 시세로 생성이 진행됐다
+    (11-08·11-09). 실행 시각 지연(예약 6시간 지연)과 무관하게 KST 날짜로만 판정한다.
+    달력 조회 실패는 진행한다(fail-open) -- 기존 세션 게이트가 2차 방어선이다.
+    """
+    kst_day, us_day = us_session_day_for(now)
+    try:
+        import exchange_calendars as xcals
+        import pandas as pd
+
+        is_session = bool(xcals.get_calendar("XNYS").is_session(pd.Timestamp(us_day)))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("us_session_calendar_unavailable kst=%s us=%s reason=%s -- 휴장 판정 생략",
+                       kst_day, us_day, type(exc).__name__)
+        return
+    if is_session:
+        logger.info("us_session_day_open kst=%s us=%s", kst_day, us_day)
+        return
+    raise UsMarketHoliday(f"us_market_holiday kst={kst_day} us={us_day}")

@@ -23,12 +23,15 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-VERSION = "1.1.0"  # DN2026_0092: 신선도는 새 미국 거래 세션 기준(휴장 스킵 반영)
+VERSION = "1.2.0"  # DN2026_0113: 본 예약 + 예비 예약 2개 cron 계약 (1.1.0 DN2026_0092)
 
 WORKFLOW_PATH = Path(".github/workflows/pipeline.yml")
 
 # 기대 설정값. 운영 정책이 바뀌면 여기만 고친다.
 EXPECTED_CRON = "17 1 * * *"         # 매일 KST 10:17 (UTC 01:17, 정각 혼잡 회피)
+# DN2026_0113: 본 예약이 GitHub 에서 누락되는 날(11-10) 대비. 본 실행 흔적이 있으면 스스로 스킵한다.
+EXPECTED_BACKUP_CRON = "47 9 * * *"  # 매일 KST 18:47 (UTC 09:47)
+BACKUP_ROLE_WIRING = f"github.event.schedule == '{EXPECTED_BACKUP_CRON}' && 'backup'"
 EXPECTED_PRIVACY = "public"
 EXPECTED_FIRST_EPISODE_BASE = 0      # next_ep = base + 1 이므로 0 이면 1화부터
 
@@ -114,14 +117,18 @@ def check_workflow_config(r: Report) -> None:
     text = WORKFLOW_PATH.read_text(encoding="utf-8")
 
     crons = re.findall(r"cron:\s*'([^']+)'", text)
+    expected = [EXPECTED_CRON, EXPECTED_BACKUP_CRON]
     if not crons:
         r.fail("cron", "schedule cron 정의 없음")
-    elif len(crons) > 1:
+    elif len(crons) > len(expected):
         r.fail("cron", f"cron 정의가 {len(crons)}개 -- 중복 실행 위험: {crons}")
-    elif crons[0] != EXPECTED_CRON:
-        r.fail("cron", f"기대 '{EXPECTED_CRON}' != 실제 '{crons[0]}'")
+    elif sorted(crons) != sorted(expected):
+        r.fail("cron", f"기대 {expected} != 실제 {crons}")
+    elif BACKUP_ROLE_WIRING not in text:
+        # 예비 cron 이 backup 역할로 배선되지 않으면 본 실행과 같은 경로로 두 번 돈다
+        r.fail("cron_backup_role", "예비 cron 의 PIPELINE_SCHEDULE_ROLE=backup 배선 없음 -- 중복 실행 위험")
     else:
-        r.ok("cron", f"'{crons[0]}' (매일 KST 10:17)")
+        r.ok("cron", f"{expected} (본 KST 10:17 / 예비 KST 18:47)")
 
     privacy = re.search(r"YOUTUBE_DEFAULT_PRIVACY:\s*(\S+)", text)
     if not privacy:

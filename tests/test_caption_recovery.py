@@ -143,6 +143,30 @@ class PixelCaptionTest(unittest.TestCase):
         self.assertGreaterEqual(bbox[0], 90)
         self.assertLessEqual(bbox[2], 990)
 
+    def test_dn2026_0113_kerning_drift_texts_pass_mask(self):
+        # 구 배치(900px 줄바꿈·8px 허용치)에서 caption_measurement_mismatch /
+        # caption_render_outside_box 로 실패한 실측 문장(Latin 커닝·문장부호 측면 여백)
+        texts = [
+            'Brute의 Bull 시장은 Brute의 시장은 흔들립니다 Debt 경고합니다 경고합니다 장세"',
+            'Reaper 오릅니다 분할 Brute의 분할 EDT가 Brute의!!',
+            '500 라인 나스닥은 점검 다시 금리는 맞섭니다 Brute의 Chaos 공포)',
+        ]
+        for text in texts:
+            with self.subTest(text=text):
+                layout = build_layout(text)
+                self.assertEqual(layout['layout_revision'], policy.LAYOUT_REVISION)
+                self.assertLessEqual(max(layout['measured_widths_px']), policy.BOX['width'] - policy.WRAP_MARGIN)
+                bbox = verify_mask(text, layout, Path(self.directory.name))
+                self.assertGreaterEqual(bbox[0], policy.BOX['x'])
+                self.assertLessEqual(bbox[2], policy.BOX['x'] + policy.BOX['width'])
+
+    def test_dn2026_0113_old_revision_manifest_is_rejected(self):
+        text = '시장 위험을 점검한다'
+        layout = build_layout(text)
+        layout['layout_revision'] = 1
+        with self.assertRaisesRegex(LayoutError, 'manifest_changed'):
+            validate_layout(text, layout)
+
     def test_four_line_candidate_retains_all_text(self):
         text = '시장의 위험을 확인하고 비중과 손실 한도를 점검한다 ' * 2
         layout = build_layout(text)
