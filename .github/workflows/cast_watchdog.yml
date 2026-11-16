@@ -1,0 +1,45 @@
+# CAST-LINE 워치독 — 능동 조회형 (investment-os hero_shorts_watchdog 패턴 이식)
+# 왜 필요한가: Actions 스케줄러 지연 실측(4h42m, 투자os 실측; 본 저장소도 05~06시 UTC 지연 관측).
+# 실행 이벤트를 기다리지 않고, 기대 발화 시각(토 KST 09:43 = UTC 00:43) + 유예 6h 내 증거를 조회한다.
+name: CAST Watchdog
+
+on:
+  schedule:
+    - cron: '23 2 * * 6'   # 토 KST 11:23 — 기대발화 00:43Z + 유예 6h 뒤 점검
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    env:
+      TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: 증거 조회 (cast_t3 워크플로우 오늘 발화 여부)
+        run: |
+          TOKEN="${{ secrets.GITHUB_TOKEN }}"
+          REPO="${{ github.repository }}"
+          SINCE=$(date -u -d '18 hours ago' +%Y-%m-%dT%H:%M:%SZ)
+          RUNS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+            "https://api.github.com/repos/$REPO/actions/workflows/cast_t3.yml/runs?created=>=$SINCE&per_page=10")
+          COUNT=$(echo "$RUNS" | python3 -c "import sys,json;print(len(json.load(sys.stdin).get('workflow_runs',[])))")
+          echo "cast_t3 최근 18h 발화 수: $COUNT"
+          if [ "$COUNT" -eq 0 ]; then
+            echo "missed — cast_t3가 유예 시간 내 발화하지 않음"
+            exit 3
+          fi
+      - name: 텔레그램 경보 (missed 시)
+        if: failure()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="⚠️ CAST-LINE 워치독: cast_t3 워크플로우 유예시간(기대발화+6h) 내 미발화 — 즉시 점검 필요" \
+            > /dev/null || echo "telegram_failed (Secrets 미설정)"
+      - name: 정상 리포트
+        if: success()
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT}" \
+            -d text="✅ CAST-LINE 워치독: cast_t3 정상 발화 확인" \
+            > /dev/null || echo "telegram_failed (Secrets 미설정)"

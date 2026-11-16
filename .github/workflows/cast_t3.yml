@@ -1,0 +1,125 @@
+# CAST-LINE T3 — 주 1회 앙상블 대표작 (2026-11-17 상세설계 v1.0 §6 준용)
+# 기존 EDT 라인(pipeline.yml)과 병렬 — 충돌 자원 5건 분리 완료 설계:
+#   C1 스케줄: 토요일 KST 09:43 (일간 10:17과 충돌 없음, 정각 회피 패턴 준수)
+#   C2 동시실행: 독립 그룹 edt-cast-production
+#   C3 원장: 라인 구분(line=cast) — daily 무손실
+#   C4 중복게이트: 라인별 분리 (validate_not_published_today 확장 예정)
+#   C5 채널키: EDT_UNIVERSE_CAST (Variable)
+name: EDT Cast T3 (주 1회 앙상블)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edt-cast-production
+  cancel-in-progress: false
+
+on:
+  schedule:
+    - cron: '43 0 * * 6' # 토요일 KST 09:43
+  workflow_dispatch:
+    inputs:
+      tier_force:
+        description: '계층 강제 (auto=시장데이터 판정)'
+        type: choice
+        default: auto
+        options: [auto, T1, T3]
+      mode:
+        description: '실행 모드 (dry_run 기본 — live는 Variable 게이트)'
+        type: choice
+        default: dry_run
+        options: [dry_run, shadow, live]
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install -r requirements.txt pytest
+      - name: 전수 테스트 (실패 시 전체 차단)
+        run: PYTHONPATH=$(pwd) python -m pytest -q src/cast/
+
+  plan:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - name: 계층 판정 + 캐스팅 계획 (0원)
+        env:
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+          ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+        run: |
+          export PYTHONPATH=$(pwd)
+          python - <<'PY'
+          import json, logging
+          from src.collector import fetch_market_data
+          from src.cast import classify_tier, cast_for_tier
+          logging.basicConfig(level=logging.INFO)
+          data = fetch_market_data()
+          tier = "${{ inputs.tier_force || 'auto' }}"
+          if tier == 'auto':
+              tier = classify_tier(data)
+          plan = cast_for_tier(tier)
+          out = {"tier": tier, "plan": plan}
+          with open("artifacts_cast/cast_plan.json", "w") as f:
+              json.dump(out, f, ensure_ascii=False, indent=1)
+          print(json.dumps(out, ensure_ascii=False, indent=1)[:2000])
+          PY
+      - name: Upload cast plan
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: cast-plan-${{ github.run_id }}
+          path: artifacts_cast/
+
+  generate:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v5
+        with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
+      - name: REF URL 자동재발급 (1시간 만료 — 실행 시점마다 갱신)
+        run: |
+          export PYTHONPATH=$(pwd)
+          python -c "from src.cast.refresh_refs import refresh; r = refresh(); print('refreshed:', sorted(r))"
+      - name: fal i2v 생성 (모드 게이트 — dry_run은 호출 0회)
+        env:
+          FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}
+          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+        run: |
+          export PYTHONPATH=$(pwd)
+          mkdir -p artifacts_cast
+          # plan artifact 다운로드 대신 plan job 산출을 전달받는다(run artifact 체인).
+          # fal은 젠스파크 래퍼 URL 다운로드 불가(422) → REF는 AI Drive readable URL 경유 주입 (부록 E 확정)
+          echo "MODE=$CAST_EXECUTION_MODE — dry_run: 호출 0회, shadow: 생성만, live: 전체"
+          python -m src.cast.__main__generate
+
+  publish:
+    needs: generate
+    runs-on: ubuntu-24.04
+    if: vars.CAST_EXECUTION_MODE == 'live'
+    steps:
+      - name: YouTube 발행 (live 모드만)
+        run: echo "live 승격 후 구현 — shadow 3회차 리포트 + 마스터 승인 선행"
+
+  report:
+    needs: [plan, generate]
+    if: always()
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 결과 리포트
+        run: echo "plan/generate 결론을 텔레그램 리포트로 전송 — notify_watchdog.yml 등록 예정"
