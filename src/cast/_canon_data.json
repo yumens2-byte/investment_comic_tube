@@ -1,0 +1,80 @@
+{
+  "_source": {
+    "spec": "02_EDT_CHARACTER_CANON v2.18.1 — EDT Universe 캐릭터 최종 스펙·형태 정의서 (노션 34b9208c-bdc3-8115-a1b0-d43032a8dbbb)",
+    "patch": "v2.28 DOLLAR_EMPEROR (3829208c-bdc3-8111-8a4d-c7ae5e6846c4)",
+    "rcl07": "RCL-07 Form 3 REF 등재 (3469208c-bdc3-81b2-b725-fbf2c00b7ed5)",
+    "synced": "2026-09-21"
+  },
+  "EDT": {
+    "id": "CHAR_HERO_001",
+    "ref_candidates": [
+      "1000038175.png (RCL-07-A FULL BODY, 잠정 QC 7/9)",
+      "1000038171.png (RCL-07-B SYSTEM STRIKE, 확정 9/9)"
+    ],
+    "form_triggers": {
+      "form2": "4-AND: tension>=75 / 동일빌런 ArcDay>=5 / 주역 EDT / balance>=+20",
+      "form3": "5-AND: tension>=95 / ArcDay>=14 / balance>=+50 / Form2 선행 — 시즌 1회"
+    },
+    "spec_kr_verbatim": "종족: 타이거(오렌지/검정 줄무늬) / 두부: 포효하는 타이거 얼굴(팡 노출), 황금 눈 발광, 줄무늬 갈기 / 아머: 청동+강철 로만 풀 플레이트(어깨 스파이크) / 엠블럼: 가슴 황금 D(원형 프레임) / 망토: 레드 풀 망토(등 부착만, 앞쪽 금지) / 무기: 대형 양손 전기 체인소(블루 전기 에너지) / 전신 타이거 퍼+극도 근육질"
+  },
+  "Exposure Futures Girl": {
+    "id": "CHAR_HERO_004 (FG-01)",
+    "spec_kr_verbatim": "허리 길이 검정×다크퍼플 그라데이션 스트레이트 헤어 LOOSE / 다크 검정 베이스+보라 네온 트림 아머 / 듀얼 피스톨(보라 에너지 발광) / 보라 에너지 허리 벨트 / x4 EXPOSURE 발광 마커+홀로그램 차트 배경 / 슬렌더, 차분하고 계산적인 얼굴",
+    "forbidden_kr": "어깨길이 머리/포니테일/단발/금발·은발·빨강, 레트로 스타일, 공격적 숏컷",
+    "ref_candidates": [
+      "ref_fg01_v3.png (A-2c 재생성, 마스터 스코어링 확정 9/9 — 2026-11-17, task_id 193201f4)",
+      "ref_fg01_v2.png (A-2b, 6.8/9 — 선순위 교체)",
+      "ref_fg01.png (A-2 원본, 수치 텍스트 렌더링 탈락)"
+    ],
+    "ref_status": "CONFIRMED_9_9",
+    "ref_confirmed": {
+      "file": "ref_fg01_v3.png",
+      "score": "9/9",
+      "date": "2026-11-17",
+      "task_id": "193201f4-b341-4f39-8592-95d64359d0d5"
+    }
+  },
+  "Leverage Muscle Man": {
+    "id": "CHAR_HERO_003 (LEV-01)",
+    "spec_kr_verbatim": "인간 남성(수인형 금지) / 불꽃 머리 빨강→주황 / 샤프 골드 눈 / 극도 근육질 상체 노출, 다크 애쉬 피부 / 다크 블랙 카고 팬츠+컴뱃 부츠 / x3 MULTIPLIER 바벨 / 레드-골드 오라",
+    "forbidden_kr": "D 엠블럼, 플래티넘 화이트, 기계 갑주, 수인형",
+    "ref_candidates": [
+      "ref_lev01_v2.png (A-1b 재생성, 마스터 스코어링 6.4/9 — 2026-11-17, task_id c94b3f77)",
+      "ref_lev01.png (A-1 원본, 마스터 스코어링 6.6/9 — 후보 선순위 유지)"
+    ],
+    "ref_status": "CONFIRMED_6_6_MASTER",
+    "ref_confirmed": {
+      "file": "ref_lev01.png",
+      "score": "6.6/9 (마스터 승인 확정)",
+      "date": "2026-11-17",
+      "task_id": "dc929ab5-c553-4c0c-a0ae-3c21d11332eb",
+      "note": "재생성 v2(6.4) 하락으로 원본 승인 — 용암 균열 질감은 LEV-01 고유 연출로 캐논 충돌 아님 판정(마스터 승인 2026-11-17)"
+    }
+  },
+  "Debt Titan": {
+    "id": "CHAR_VILLAIN_001",
+    "spec_kr_verbatim": "흑색 스파이크 아머 + 용암 균열 (스파이크 괴물 형태)"
+  },
+  "Oil Shock Titan": {
+    "id": "CHAR_VILLAIN_002",
+    "spec_kr_verbatim": "원문 구조상 패치 페이지 필요 — RCL/스펙 페이지에서 별도 확인"
+  },
+  "video_visual_canon": {
+    "근거": "마스터 승인 컷1 실측(2026-09-21, 오미니) — 영상 전용 시각 기준선",
+    "Oil Shock Titan_en": "a colossal titan of molten oil and black smoke"
+  },
+  "emblem_rule": "엠블럼 D는 EDT 전용 — 타 캐릭터 사용 절대 금지 (RCL-07/스펙 공통)",
+  "_ref_scoring_2026_11_17": {
+    "note": "CAST-LINE T3 선행작업 — 마스터 스코어링 실측치 기록 (확정 아님, CANDIDATE 등급)",
+    "LEV-01": {
+      "candidate": "ref_lev01.png",
+      "score": "6.6/9 — 마스터 승인 확정 (2026-11-17)",
+      "안건": "용암 균열 질감 — LEV-01 고유 연출로 판정, 충돌 없음. 재생성 v2(6.4) 하락으로 원본 확정"
+    },
+    "FG-01": {
+      "candidate": "ref_fg01_v3.png",
+      "score": "9/9 확정",
+      "안건": "해소 — 텍스트 0건, x4 패널 정확 4건"
+    }
+  }
+}

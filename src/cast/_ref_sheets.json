@@ -1,0 +1,11 @@
+{
+  "_comment": "REF 시트 URL 주입형 — fal은 젠스파크 래퍼 URL 다운로드 불가(부록 E 실측 422), AI Drive readable URL 기기. URL은 1시간 만료이므로 러너가 실행 시점에 재발급해 갱신한다.",
+  "_confirmed": {
+    "EDT": "RCL-07-B SYSTEM STRIKE (canon.py REF_SHEETS 기존 확정)",
+    "FG-01": "ref_fg01_v3.png — 9/9 (2026-11-17)",
+    "LEV-01": "ref_lev01.png — 6.6/9 마스터 승인 (2026-11-17)"
+  },
+  "EDT": [],
+  "LEV-01": [],
+  "FG-01": []
+}
