@@ -97,7 +97,8 @@ def _error_code(e: Exception) -> str:
     msg = str(e)
     for code in ("narration_failed", "script_mismatch", "cost_cap_run_runtime",  # DN2026_0115
                  "cost_cap_month_runtime", "cost_cap_month", "cost_cap_run",
-                 "time_budget", "duration_out_of_range"):
+                 "time_budget", "duration_out_of_range",
+                 "cut_sec_too_short_for_narration"):   # R4-08: 원장 error 사유 코드 일관성
         if msg.startswith(code):
             return f"{type(e).__name__}:{code}"
     return type(e).__name__

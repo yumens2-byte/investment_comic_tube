@@ -171,3 +171,21 @@ def test_same_week_rerun_reproduces_original_decision():
     rerun = S.decide(data, prev, run_date_kst="2026-11-21")   # 같은 주 재실행
     for k in ("villain_raw", "villain_streak", "season_week", "omen_payoff", "ending_type", "omen_axis"):
         assert rerun[k] == original[k], k
+
+
+
+def test_same_week_rerun_first_episode_and_next_week_and_no_nesting():
+    """R6-07 #4 — 첫 회차(basis None) 재실행 동일, 재실행 다음 주 정상 증가, basis 중첩 없음."""
+    data = {"TNX": {"close": 5.0, "change_pct": 3.0, "dev_pct": 6.0}}
+    d1 = S.decide(data, None, run_date_kst="2026-11-21")
+    st1 = S.next_state(d1, {"beats": [{"narration": "x"}]})
+    assert st1["basis"] is None
+    prev = {"run_id": "a", "run_date_kst": "2026-11-21", "villain": d1["villain"], "story_state": st1}
+    again = S.decide(data, prev, run_date_kst="2026-11-21")
+    assert (again["season_week"], again["villain_streak"], again["omen_payoff"]) == (1, 1, None)
+    st_again = S.next_state(again, {"beats": [{"narration": "x"}]})
+    nxt = S.decide(data, {"run_id": "b", "run_date_kst": "2026-11-21", "villain": again["villain"],
+                          "story_state": st_again}, run_date_kst="2026-11-28")
+    assert nxt["season_week"] == 2
+    st2 = S.next_state(nxt, {"beats": [{"narration": "y"}]})
+    assert "basis" not in (st2["basis"] or {})             # 중첩 누적 없음

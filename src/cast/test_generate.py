@@ -551,6 +551,7 @@ def test_narration_requires_cut_sec_6(script_env, monkeypatch):
     with pytest.raises(G.GenerationError, match="cut_sec_too_short_for_narration"):
         gen_main.main()
     assert script_env["add"] == [] and script_env["open"] == []
+    assert script_env["ledger"]()["error"] == "GenerationError:cut_sec_too_short_for_narration"
 
 
 def test_next_omen_prompt_uses_omen_axis():
