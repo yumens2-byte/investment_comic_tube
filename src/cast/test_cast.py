@@ -86,3 +86,15 @@ def test_missing_canon_file_blocks(monkeypatch, tmp_path):
     monkeypatch.setenv("CAST_CANON_FILE", str(tmp_path / "none.json"))
     with pytest.raises(CastPlanError, match="캐논 파일 부재"):
         cast_for_tier("T3")
+
+
+def test_villain_only_cut_has_no_hero_after_filter():
+    """부록 U 회귀 테스트 — 빌런 단독 컷은 히어로 REF 불필요(캐논 텍스트 기반)."""
+    from src.cast.casting import HEROES, cast_for_tier
+
+    # T2·T3의 1컷은 빌런 단독 — HEROES 필터 후 히어로 0이어야 한다 (T1 1컷은 EDT 단독이 정상)
+    for tier in ("T2", "T3"):
+        plan = cast_for_tier(tier)
+        first = [c for c in plan[0]["characters"] if c in HEROES]
+        assert first == [], f"{tier} 1컷(빌런 단독)에서 히어로 오인: {first}"
+    assert [c for c in cast_for_tier("T1")[0]["characters"] if c in HEROES] == ["EDT"]

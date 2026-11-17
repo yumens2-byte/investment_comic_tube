@@ -11,6 +11,7 @@ import logging
 import os
 
 from src.cast import generate
+from src.cast.casting import HEROES
 from src.cast.refsheet import load_ref_urls, ref_url_for
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(message)s")
@@ -35,7 +36,9 @@ def main() -> None:
     for cut in plan:
         role = cut["role"]
         prompt = generate.build_cut_prompt(CANON_PROMPT, role)
-        hero_refs = [c for c in cut["characters"] if c != "villain"]
+        # casting이 villain을 실명으로 치환하므로 HEROES 화이트리스트로 필터해야 한다
+        # (구비교 c != "villain"은 항상 참 — 빌런 단독 컷 오인 결함, 부록 U)
+        hero_refs = [c for c in cut["characters"] if c in HEROES]
         image_url = None
         for ch in hero_refs:                      # 첫 히어로 REF를 첫 프레임으로
             url = ref_url_for(refs, ch)
