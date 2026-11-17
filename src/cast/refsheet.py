@@ -1,7 +1,7 @@
 """REF 시트 URL 주입 — gen/data/ref_sheets.json (investment-os canon.py 동일 구조).
 
 파일 형식: {"EDT": ["https://..."], "LEV-01": ["https://..."], "FG-01": ["https://..."]}
-fal은 젠스파크 래퍼 URL을 다운로드하지 못하므로(실측 422) AI Drive readable URL을 기입한다.
+URL은 refresh_refs가 실행 시점에 저장소 assets/refs raw URL로 채운다(부록 S, DN2026_0114 주석 정정).
 """
 from __future__ import annotations
 

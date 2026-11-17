@@ -6,12 +6,18 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
+from src.cast import VERSION
+
 logger = logging.getLogger("cast.report")
+
+ARTIFACT_DIR = "artifacts_cast"   # DN2026_0114 — report job이 다운로드한 plan·cuts artifact
 
 
 def send_report(text: str) -> bool:
@@ -42,10 +48,12 @@ def send_report(text: str) -> bool:
 
 
 def build_text(run_conclusion: str, tier: str | None, total_cost: float | None,
-               cuts_ok: int | None = None) -> str:
+               cuts_ok: int | None = None, mode: str | None = None) -> str:
     """실행 요약 텍스트 1건 — 값 없는 항목은 미확정으로 표기."""
     lines = [f"<b>CAST-LINE 리포트</b> — {run_conclusion}"]
     lines.append(f"tier: {tier or '미확정'}")
+    if mode is not None:   # DN2026_0114
+        lines.append(f"mode: {mode or '미확정'}")
     if total_cost is not None:
         lines.append(f"fal 비용: ${total_cost:.2f}")
     if cuts_ok is not None:
@@ -53,18 +61,45 @@ def build_text(run_conclusion: str, tier: str | None, total_cost: float | None,
     return "\n".join(lines)
 
 
+def _read_json(name: str) -> dict | None:
+    """artifact 파일 1개 — 없거나 깨졌으면 None(미확정). # DN2026_0114"""
+    path = os.path.join(ARTIFACT_DIR, name)
+    try:
+        with open(path) as f:
+            doc = json.load(f)
+        return doc if isinstance(doc, dict) else None
+    except (OSError, ValueError) as e:
+        logger.info("report_artifact_missing file=%s err=%s", name, type(e).__name__)
+        return None
+
+
+def build_conclusion() -> str:
+    """plan/generate/publish job 결과 3개 표기 — env CAST_RESULT_*(needs.<job>.result). # DN2026_0114"""
+    parts = []
+    for job in ("plan", "generate", "publish"):
+        parts.append(f"{job}={os.environ.get('CAST_RESULT_' + job.upper()) or '미확정'}")
+    return " · ".join(parts)
+
+
 def main() -> None:
     # 리포트는 파이프라인 결론을 바꿀 수 없다 — 어떤 예외도 스텝 실패로 전파하지 않는다(부록 Z-2).
     try:
-        conclusion = os.environ.get("CAST_RUN_CONCLUSION", "unknown")
-        tier = os.environ.get("CAST_RUN_TIER")
-        cost = os.environ.get("CAST_RUN_COST")
-        cuts = os.environ.get("CAST_RUN_CUTS")
+        logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(name)s:%(message)s")
+        plan_doc = _read_json("cast_plan.json") or {}
+        gen_doc = _read_json("generate_ledger.json") or {}
+        mode = plan_doc.get("mode") or gen_doc.get("mode")
+        logger.info("[CAST] v%s 시작 stage=report mode=%s", VERSION, mode or "미확정")  # DN2026_0114
+        cost = gen_doc.get("total_cost_usd")
+        results = gen_doc.get("results")
         text = build_text(
-            conclusion, tier,
-            float(cost) if cost else None,
-            int(cuts) if cuts else None,
+            build_conclusion(),
+            plan_doc.get("tier") or gen_doc.get("tier"),
+            float(cost) if cost is not None else None,
+            len(results) if isinstance(results, list) else None,
+            mode=mode or "",
         )
+        if gen_doc.get("error"):
+            text += f"\n오류: {gen_doc['error']}"
         send_report(text)
     except Exception as e:
         logger.warning("report_main_failed err=%s msg=%s", type(e).__name__, e)

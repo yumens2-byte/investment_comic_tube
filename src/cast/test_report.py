@@ -77,3 +77,55 @@ def test_main_never_raises(monkeypatch):
     monkeypatch.setenv("CAST_RUN_CUTS", "7")
     monkeypatch.setattr(rep, "send_report", lambda t: (_ for _ in ()).throw(RuntimeError("boom")))
     rep.main()   # 예외가 전파되지 않으면 통과
+
+
+# ── DN2026_0114: 파일 기반 리포트 구성 ─────────────────────────────────────
+import json
+
+
+def _capture(monkeypatch):
+    sent = []
+    monkeypatch.setattr(rep, "send_report", lambda t: sent.append(t) or True)
+    return sent
+
+
+def test_main_builds_text_from_artifacts(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    d = tmp_path / "artifacts_cast"
+    d.mkdir()
+    (d / "cast_plan.json").write_text(json.dumps({"tier": "T3", "mode": "shadow", "plan": []}))
+    (d / "generate_ledger.json").write_text(json.dumps(
+        {"tier": "T3", "mode": "shadow", "total_cost_usd": 2.52, "results": [{}] * 7, "error": None}))
+    monkeypatch.setenv("CAST_RESULT_PLAN", "success")
+    monkeypatch.setenv("CAST_RESULT_GENERATE", "success")
+    monkeypatch.setenv("CAST_RESULT_PUBLISH", "skipped")
+    sent = _capture(monkeypatch)
+    rep.main()
+    t = sent[0]
+    assert "plan=success · generate=success · publish=skipped" in t
+    assert "tier: T3" in t and "mode: shadow" in t and "$2.52" in t and "7컷" in t
+
+
+def test_main_without_artifacts_marks_unknown(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CAST_RESULT_PLAN", "failure")
+    monkeypatch.delenv("CAST_RESULT_GENERATE", raising=False)
+    monkeypatch.setenv("CAST_RESULT_PUBLISH", "skipped")
+    sent = _capture(monkeypatch)
+    rep.main()
+    t = sent[0]
+    assert "plan=failure · generate=미확정 · publish=skipped" in t
+    assert "tier: 미확정" in t and "mode: 미확정" in t and "fal 비용" not in t
+
+
+def test_main_reports_generate_error(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    d = tmp_path / "artifacts_cast"
+    d.mkdir()
+    (d / "generate_ledger.json").write_text(json.dumps(
+        {"tier": "T1", "mode": "live", "total_cost_usd": 0.0, "results": [],
+         "error": "GenerationError:cost_cap_month"}))
+    (d / "cast_plan.json").write_text("{broken")
+    sent = _capture(monkeypatch)
+    rep.main()
+    assert "cost_cap_month" in sent[0] and "tier: T1" in sent[0] and "0컷" in sent[0]

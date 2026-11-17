@@ -3,9 +3,11 @@
 확정 사실 반영 (2026-11-17 부록 E 실측):
 - 엔드포인트 minimax/h3/image-to-video, 768P $0.06/s, duration 5~15 정수
 - prompt_expansion_mode "disabled"
-- fal은 젠스파크 래퍼 URL 다운로드 불가(422) → REF는 AI Drive readable URL 주입
+- fal은 젠스파크 래퍼 URL 다운로드 불가(422) → REF는 저장소 assets/refs raw URL 주입(refresh_refs, 부록 S) # DN2026_0114
 - REF 미확정 캐릭터 컷은 호출 전 차단(fail-closed) — casting.cast_for_tier가 보장
 - 컷당 재생성 1회 한정, 재차 실패 시 폐기·원장 기록 (캐논 규칙 §7)
+- DN2026_0114: 재제출은 fal 터미널 실패(FAILED 등)에만 1회. 타임아웃·조회 오류·다운로드·
+  ffprobe 실패는 재제출하지 않는다(이중 과금 방지). 시간 상한은 호출부가 deadline_ts로 배분.
 """
 from __future__ import annotations
 
@@ -22,7 +24,10 @@ FAL_ENDPOINT = os.environ.get("CAST_FAL_ENDPOINT", "minimax/h3/image-to-video")
 FAL_PRICE_PER_SEC = 0.06          # 768P — fal 공식 요표 + 2026-11-17 실측 정합
 MAX_RETRIES_PER_CUT = 1           # 컷당 재생성 한도 (캐논 규칙 §7)
 POLL_INTERVAL_SEC = 12
-POLL_TIMEOUT_SEC = 900
+POLL_TRANSIENT_MAX = 3            # 상태 조회 일시 오류 연속 허용 횟수 # DN2026_0114
+DOWNLOAD_TRIES = 3                # 같은 URL 다운로드 시도 횟수(재제출 아님) # DN2026_0114
+PROBE_TIMEOUT_SEC = 60            # DN2026_0114
+# POLL_TIMEOUT_SEC 제거 — 컷별 deadline_ts(호출부 시간 예산 배분)로 대체 # DN2026_0114
 
 # 비트별 상황값 — 발행용 프롬프트는 캐논 고정 블록 + 이 문장만 얹는다 (캐논 규칙 §3).
 ROLE_SITUATION = {
@@ -81,8 +86,8 @@ def _fal_json(req: urllib.request.Request) -> dict:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read())
     except urllib.error.HTTPError as e:
-        detail = e.read().decode(errors="replace")[:300]
-        raise GenerationError(f"fal HTTP {e.code} — {detail}") from e
+        # DN2026_0114 (R6-01 #9): 응답 본문은 로그·artifact에 남기지 않는다 — 상태코드만
+        raise GenerationError(f"fal HTTP {e.code}") from e
 
 
 def submit_cut(request: dict) -> dict:
@@ -99,50 +104,120 @@ def submit_cut(request: dict) -> dict:
     return sub
 
 
-def poll_cut(sub: dict, timeout_sec: int = POLL_TIMEOUT_SEC) -> str:
-    """완료 폴링 → video URL. 비정상 상태·타임아웃 시 GenerationError."""
+class _TerminalFailure(Exception):
+    """fal이 작업을 터미널 실패(FAILED 등)로 끝냄 — 재제출 1회 허용 대상. # DN2026_0114"""
+
+
+def _get_json(url: str, headers: dict) -> dict:
+    """상태·결과 GET 1회. 예외 분류는 호출부(_get_json_transient)가 한다."""
+    with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=30) as r:
+        return json.loads(r.read())
+
+
+def _get_json_transient(url: str, headers: dict) -> dict:
+    """URLError·HTTP 5xx는 연속 POLL_TRANSIENT_MAX회까지 대기 후 재시도. # DN2026_0114
+    4xx·그 외는 GenerationError(재제출 없음 — 이중 과금 방지)."""
+    fails = 0
+    while True:
+        try:
+            return _get_json(url, headers)
+        except urllib.error.HTTPError as e:
+            if e.code < 500:
+                raise GenerationError(f"fal 상태 조회 HTTP {e.code}") from e
+            err: Exception = e
+        except urllib.error.URLError as e:
+            err = e
+        except (TimeoutError, OSError) as e:    # 소켓 timeout 등 일시 오류
+            err = e
+        fails += 1
+        if fails > POLL_TRANSIENT_MAX:
+            raise GenerationError(f"fal 상태 조회 연속 실패 {fails}회 — {type(err).__name__}") from err
+        logger.warning("fal_poll_transient n=%d err=%s", fails, type(err).__name__)
+        time.sleep(POLL_INTERVAL_SEC)
+
+
+def poll_cut(sub: dict, deadline_ts: float) -> str:
+    """완료 폴링 → video URL. # DN2026_0114
+    IN_QUEUE/IN_PROGRESS 계속, COMPLETED → url, 그 외 상태 → _TerminalFailure,
+    deadline_ts 초과 → GenerationError("fal 타임아웃")."""
     headers = {"Authorization": _fal_headers()["Authorization"]}
-    deadline = time.time() + timeout_sec
-    while time.time() < deadline:
-        with urllib.request.urlopen(urllib.request.Request(sub["status_url"], headers=headers), timeout=30) as r:
-            st = json.loads(r.read())
+    while True:
+        if time.time() > deadline_ts:
+            raise GenerationError("fal 타임아웃")
+        st = _get_json_transient(sub["status_url"], headers)
         status = st.get("status")
         if status == "COMPLETED":
-            with urllib.request.urlopen(urllib.request.Request(sub["response_url"], headers=headers), timeout=30) as r:
-                res = json.loads(r.read())
+            res = _get_json_transient(sub["response_url"], headers)
             url = (res.get("video") or {}).get("url")
             if not url:
                 raise GenerationError("fal 완료 응답에 video.url 부재")
             return url
         if status not in ("IN_QUEUE", "IN_PROGRESS"):
-            raise GenerationError(f"fal 비정상 상태 {status}")
-        time.sleep(POLL_INTERVAL_SEC)
-    raise GenerationError(f"fal 타임아웃({timeout_sec}s)")
+            raise _TerminalFailure(f"fal 비정상 상태 {status}")
+        remaining = deadline_ts - time.time()
+        time.sleep(max(0.0, min(POLL_INTERVAL_SEC, remaining)))
 
 
-def generate_cut(request: dict, out_path: str, retries: int = MAX_RETRIES_PER_CUT) -> dict:
-    """컷 1개 생성(제출→폴링→저장) + 비용 계산. 실패 시 재시도 1회 후 예외."""
-    last_err: Exception | None = None
-    for attempt in range(retries + 1):
+def _download(url: str, out_path: str) -> None:
+    """같은 URL을 최대 DOWNLOAD_TRIES회 다운로드(urlopen timeout=120). 재제출 없음. # DN2026_0114"""
+    last: Exception | None = None
+    for n in range(1, DOWNLOAD_TRIES + 1):
         try:
-            sub = submit_cut(request)
-            video_url = poll_cut(sub)
-            urllib.request.urlretrieve(video_url, out_path)
-            duration = _probe_duration(out_path)
-            return {"cut": request.get("_cut_no"), "path": out_path, "duration_sec": duration,
-                    "cost_usd": estimate_cost(duration), "request_id": sub["request_id"],
-                    "attempts": attempt + 1}
-        except (GenerationError, urllib.error.URLError, OSError) as e:
-            last_err = e
-            logger.warning("cut_generate_retry attempt=%d err=%s", attempt + 1, e)
-    raise GenerationError(f"컷 생성 실패(재시도 {retries}회 소진): {last_err}")
+            with urllib.request.urlopen(url, timeout=120) as r, open(out_path, "wb") as f:
+                while True:
+                    chunk = r.read(1 << 20)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            return
+        except (urllib.error.URLError, OSError) as e:
+            last = e
+            logger.warning("cut_download_retry n=%d err=%s", n, type(e).__name__)
+    raise GenerationError(f"컷 다운로드 실패({DOWNLOAD_TRIES}회) — {type(last).__name__}")
+
+
+def generate_cut(request: dict, out_path: str, *, cut_no: int, deadline_ts: float,
+                 on_submit=None) -> dict:
+    """컷 1개 생성 — 제출 1회, 터미널 실패(FAILED 등)일 때만 재제출 1회. # DN2026_0114
+
+    재제출하지 않는 경우: 타임아웃·조회 연속 실패·다운로드 실패·ffprobe 실패(이중 과금 방지).
+    on_submit: 각 제출 직전 호출(비용 가드·원장 선기록). 예외 시 제출하지 않는다.
+    """
+    attempts = 0
+    sub: dict | None = None
+    video_url = None
+    while video_url is None:
+        if time.time() > deadline_ts:
+            raise GenerationError(f"컷{cut_no} fal 타임아웃")
+        if on_submit is not None:
+            on_submit()
+        attempts += 1
+        sub = submit_cut(request)
+        try:
+            video_url = poll_cut(sub, deadline_ts)
+        except _TerminalFailure as e:
+            if attempts > MAX_RETRIES_PER_CUT:
+                raise GenerationError(f"컷{cut_no} 생성 실패(재제출 {MAX_RETRIES_PER_CUT}회 소진): {e}") from e
+            logger.warning("cut_resubmit cut=%d attempt=%d reason=%s", cut_no, attempts, e)
+    _download(video_url, out_path)
+    duration = _probe_duration(out_path)
+    return {"cut": cut_no, "path": out_path, "duration_sec": duration,
+            "cost_usd": estimate_cost(duration), "request_id": sub["request_id"],
+            "attempts": attempts}
 
 
 def _probe_duration(path: str) -> float:
     """ffprobe 기술검증 — investment-os _validate_output 패턴 준용."""
     import subprocess
-    r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                        "-of", "csv=p=0", path], capture_output=True, text=True)
+    try:  # DN2026_0114 — timeout·미설치도 GenerationError(재제출 없음)
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                            "-of", "csv=p=0", path], capture_output=True, text=True,
+                           timeout=PROBE_TIMEOUT_SEC, check=False)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise GenerationError(f"ffprobe 실행 실패({type(e).__name__}) — {path}") from e
     if r.returncode != 0:
         raise GenerationError(f"ffprobe 실패 — 손상 파일 {path}")
-    return float(r.stdout.strip())
+    try:
+        return float(r.stdout.strip())
+    except ValueError as e:
+        raise GenerationError(f"ffprobe 길이 해석 실패 — {path}") from e
