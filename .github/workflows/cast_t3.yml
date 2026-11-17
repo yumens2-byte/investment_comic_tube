@@ -147,6 +147,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: 결과 리포트 (텔레그램)
+        continue-on-error: true   # 리포트 유실은 run conclusion을 바꾸지 않는다(부록 AB)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
