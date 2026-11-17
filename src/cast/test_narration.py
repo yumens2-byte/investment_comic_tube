@@ -58,7 +58,7 @@ def test_tempo_boundaries():
 
 def test_too_long_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts([]))
-    monkeypatch.setattr(N, "_probe", lambda p: 10.5)   # 10.5/9.4 = 1.117 > 1.10
+    monkeypatch.setattr(N, "_probe", lambda p: 12.0)   # 12.0/9.4 = 1.277 > 1.25
     with pytest.raises(N.NarrationError, match="narration_too_long beats=\\[0\\]"):
         N.synthesize(_beats(1), str(tmp_path))
 
@@ -112,9 +112,9 @@ def test_fit_cuts_rules():
     f = N.fit_cuts([4.0, 7.2, 9.6])
     assert [x["cut_sec"] for x in f] == [5, 8, 10] and f[2]["tempo"] == round(9.6 / 9.4, 4)
     with pytest.raises(N.NarrationError, match="narration_total_too_long"):
-        N.fit_cuts([8.9] * 7)                            # 7×(8.9/1.1+0.6)=60.8 > 58
-    with pytest.raises(N.NarrationError, match=r"secs=\[1.00,11.00\]"):
-        N.fit_cuts([1.0, 11.0])                          # 실패 시 전체 길이 기록
+        N.fit_cuts([9.8] * 7)                            # 7×(9.8/1.25+0.6)=59.1 > 58
+    with pytest.raises(N.NarrationError, match=r"beats=\[1\] secs=\[1.00,12.00\]"):
+        N.fit_cuts([1.0, 12.0])                          # 12/9.4=1.277 > 1.25                          # 실패 시 전체 길이 기록
 
 
 def test_fit_cuts_shadow_measured_case():
@@ -133,3 +133,34 @@ def test_fit_cuts_max_script_caps_fit():
     secs = [30 / 3.1] + [24 / 3.1] * 6
     f = N.fit_cuts(secs)
     assert N._composed_total(secs, [x["tempo"] for x in f]) <= N.TOTAL_MAX_SEC
+
+
+
+def test_fit_cuts_shadow_44139523787():
+    """DN2026_0116 shadow 실측(무음 제거 전, 합 64.32초) — 1.25 상한에서 통과, 7번 비트 11.12초 포함."""
+    secs = [8.20, 9.20, 8.04, 8.52, 9.04, 9.60, 11.12]
+    f = N.fit_cuts(secs)
+    assert N._composed_total(secs, [x["tempo"] for x in f]) <= N.TOTAL_MAX_SEC + 0.01
+    assert all(x["tempo"] <= N.FIT_MAX_TEMPO for x in f) and all(5 <= x["cut_sec"] <= 10 for x in f)
+    for s_, x in zip(secs, f):
+        assert x["cut_sec"] >= s_ / x["tempo"] + N.CUT_TAIL_SEC - 1e-6
+
+
+@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
+def test_trim_silence_cuts_head_and_tail(tmp_path):
+    """DN2026_0116 — 앞 1초·뒤 1.5초 무음 + 2초 음성 → 약 2.2초."""
+    p = str(tmp_path / "n.wav")
+    subprocess.run(["ffmpeg", "-y", "-v", "error",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=1",
+                    "-f", "lavfi", "-i", "sine=frequency=330:duration=2:sample_rate=24000",
+                    "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono:d=1.5",
+                    "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1", "-ac", "1", p],
+                   check=True, capture_output=True, timeout=60)
+    assert abs(N._probe(p) - 4.5) < 0.05
+    out = N.trim_silence(p)
+    assert out.endswith("_trim.wav") and 2.0 <= N._probe(out) <= 2.4
+
+
+def test_trim_silence_fail_open(tmp_path):
+    missing = str(tmp_path / "none.wav")
+    assert N.trim_silence(missing) == missing

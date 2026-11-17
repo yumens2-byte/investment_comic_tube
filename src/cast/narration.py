@@ -22,7 +22,11 @@ MAX_TEMPO = 1.15          # 이보다 빨리 돌려야 하면 대본 길이 초�
 CUT_MIN_SEC = 5
 CUT_MAX_SEC = 10
 CUT_TAIL_SEC = 0.6        # 내레이션 끝 뒤 여유
-FIT_MAX_TEMPO = 1.10      # 10초 컷에 넣기 위한 최대 압축
+FIT_MAX_TEMPO = 1.25      # 10초 컷에 넣기 위한 최대 압축(atempo, 음높이 유지) — DN2026_0116 shadow 44139523787 실측(초당 2.0~3.4자)으로 1.10→1.25
+SILENCE_DB = "-45dB"      # 앞뒤 무음 판정 임계 — DN2026_0116
+SILENCE_KEEP_HEAD = 0.08  # 앞 무음 남김(초)
+SILENCE_KEEP_TAIL = 0.12  # 뒤 무음 남김(초)
+MIN_TRIMMED_SEC = 0.3     # 이보다 짧아지면 무음 제거 결과를 버리고 원본 사용
 TOTAL_MIN_SEC = 16        # 합성 하한 15초 + 1초
 TOTAL_MAX_SEC = 58        # Shorts 60초 이내(합성 상한 60초 - 2초)
 PROBE_TIMEOUT_SEC = 30
@@ -90,6 +94,24 @@ def plan_only(beats: list[dict]) -> list[dict]:
              "chars": len(b["narration"])} for b in beats]
 
 
+def trim_silence(wav: str) -> str:
+    """DN2026_0116 — TTS wav 앞뒤 무음 제거 → <stem>_trim.wav 경로. 실패·과도 절삭이면 원본 경로(fail-open, 원본 길이로 판정)."""
+    out = os.path.splitext(wav)[0] + "_trim.wav"
+    af = (f"silenceremove=start_periods=1:start_threshold={SILENCE_DB}:start_silence={SILENCE_KEEP_HEAD},"
+          f"areverse,silenceremove=start_periods=1:start_threshold={SILENCE_DB}:start_silence={SILENCE_KEEP_TAIL},"
+          "areverse")
+    try:
+        subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", wav, "-af", af, out],
+                       check=True, capture_output=True, timeout=PROBE_TIMEOUT_SEC)
+        if _probe(out) < MIN_TRIMMED_SEC:
+            logger.warning("silence_trim_rejected wav=%s", os.path.basename(wav))
+            return wav
+        return out
+    except (subprocess.SubprocessError, OSError, NarrationError) as e:
+        logger.warning("silence_trim_failed wav=%s err=%s", os.path.basename(wav), type(e).__name__)
+        return wav
+
+
 def _composed_total(secs: list[float], tempos: list[float]) -> float:
     """compose._narration_plan 과 같은 식의 합성 길이 추정: Σ max(min_cut, sec/tempo + 0.6)."""
     min_cut = max(CUT_MIN_SEC, TOTAL_MIN_SEC / max(1, len(secs)))
@@ -99,10 +121,10 @@ def _composed_total(secs: list[float], tempos: list[float]) -> float:
 def fit_cuts(secs: list[float]) -> list[dict]:
     """DN2026_0116 — 내레이션 실측 길이 → 컷별 {cut_sec(정수), tempo}.
 
-    1) 컷 tempo = max(1.0, sec/9.4) — 10초 컷에 들어가도록. 1.10 초과 비트는 오류.
-    2) 합성 길이(Σ max(min_cut, sec/tempo+0.6))가 58초를 넘으면 전 컷 공통 tempo(≤1.10)를
+    1) 컷 tempo = max(1.0, sec/9.4) — 10초 컷에 들어가도록. FIT_MAX_TEMPO(1.25) 초과 비트는 오류.
+    2) 합성 길이(Σ max(min_cut, sec/tempo+0.6))가 58초를 넘으면 전 컷 공통 tempo(≤FIT_MAX_TEMPO)를
        이분 탐색으로 올려 58초 이내로 맞춘다(R6-03 치명: 컷 올림 누적으로 61초 차단되던 문제).
-       1.10으로도 넘으면 오류(fal 호출 전).
+       상한으로도 넘으면 오류(fal 호출 전).
     3) fal 컷 길이 = max(5, ceil(sec/tempo+0.6)) ≤ 10. 합계 16초 미만이면 짧은 컷부터 1초씩 늘린다.
     오류 메시지에 전 비트 실측 길이를 남긴다.
     """
@@ -158,9 +180,11 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
         ok = sum(1 for p in paths if p)
         raise NarrationError(f"tts_failed reason={reason} ok={ok}/{len(beats)}")
 
+    raw = [_probe(wav) for wav in paths]
+    paths = [trim_silence(wav) for wav in paths]   # DN2026_0116: 앞뒤 무음 제거 후 실측
     secs = [_probe(wav) for wav in paths]
-    for b, sec, text in zip(beats, secs, texts):
-        logger.info("narration_measured cut=%s sec=%.2f chars=%d", b["cut"], sec, len(text))
+    for b, r, sec, text in zip(beats, raw, secs, texts):
+        logger.info("narration_measured cut=%s raw=%.2f sec=%.2f chars=%d", b["cut"], r, sec, len(text))
     fitted = fit_cuts(secs)
     out: list[dict] = []
     for b, wav, sec, f in zip(beats, paths, secs, fitted):
