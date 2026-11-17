@@ -22,9 +22,11 @@ from .storyline import HEROES, load_cast_canon
 
 logger = logging.getLogger("cast.script")
 
-SCRIPT_VERSION = 1
+SCRIPT_VERSION = 2  # DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
-MAX_RESOLVED_CHARS = 36        # 검증: 토큰 대입 후 36자
+# DN2026_0116: 실측 낭독 속도 초당 약 3.1자(shadow run 44133047259, 30자=9.68초) — 컷 최대 10초 기준
+MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후)
+MAX_PLAIN_CHARS = 24           # 그 외 비트(토큰 금지)
 MAX_SITUATION_WORDS = 45
 # DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
 # R6-05 #9: 매매 동사 + 명령형 어미까지 확장("담아라", "팔아", "사두세요", 문중 "사라,")
@@ -51,7 +53,7 @@ ROLE_PURPOSE = {
     "ESTABLISH_THREAT": "지표 사실 토큰 1개 + 빌런 등장",
     "ESCALATE": "위험이 도시 전체로 확산",
     "ENGAGE": "EDT가 원칙을 선언",
-    "CRISIS": "최대 위기(토큰 1개까지 허용)",
+    "CRISIS": "최대 위기(숫자·토큰 금지)",
     "TURN": "hero_focus와 EDT의 협업으로 전환",
     "RESOLVE": "교훈 1개(비중·분산·손절·관망 중 하나), 영웅 포즈 금지",
     "NEXT_OMEN": "다음 위협(omen 빌런/축)의 그림자 암시, 숫자 금지, ending_type 형식",
@@ -104,12 +106,12 @@ def template_line(role: str, index: int, decision: dict, snapshot: dict) -> str:
     if role == "ESTABLISH_THREAT":
         # R4-06 관찰: 게이트 대체(다른 축)면 축의 공격 형태를 함께 밝혀 지표와 빌런을 맞춘다
         form = _FORM_KR.get(axis, "")
-        line = f"{token}, {form}{v} 등장" if token else f"{_subj(form + v)} 도시를 덮쳤다"
-        return payoff + line
+        # DN2026_0116: 복선 회수 문구(예고대로/예상 밖)는 30자 상한 때문에 ESCALATE 비트로 옮긴다
+        return f"{token}, {form}{v} 등장" if token else f"{_subj(form + v)} 도시를 덮쳤다"
     if role == "AFTERMATH_CALM":
-        return f"{token}, 시장이 숨을 고른다" if token else "폭풍이 지나고 시장이 숨을 고른다"
+        return f"{token}, 숨 고르는 시장" if token else "폭풍이 지나고 시장이 숨을 고른다"   # DN2026_0116 30자
     if role == "ESCALATE":
-        return _ESCALATE[axis]
+        return payoff + _ESCALATE[axis]
     if role == "ENGAGE":
         return "EDT가 말한다. 원칙이 먼저다"
     if role == "CRISIS":
@@ -193,7 +195,9 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
         f"[직전 회차 미해결] {unresolved or '없음'}\n"
         f"[마무리 형식] {decision['ending_type']} — {ending.get('guide', '')}\n"
         f"[비트 계약]\n{beats}\n"
-        "[narration 규칙] 각 비트 한 문장, 토큰 제외 28자 이하. 투자 권유·수익 보장·매수/매도 지시 금지. "
+        "[narration 규칙] 각 비트 한 문장. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하), "
+        "나머지 비트는 숫자·토큰 없이 24자 이하(낭독 시간 제한). 복선 회수(예고대로/예상 밖)는 2번 비트에. "
+        "투자 권유·수익 보장·매수/매도 지시 금지. "
         "지어낸 수치 금지."
         f"{market_facts.prompt_contract(snapshot)}\n"
         "[situation_en 규칙] 영어 40단어 이하, 1액션 1카메라무브. 캐릭터 외형 묘사 금지(고정 블록이 따로 붙음). "
@@ -222,8 +226,8 @@ def _parse(raw: str) -> dict[int, dict]:
     return out
 
 
-def check_beat(item: dict | None, snapshot: dict) -> tuple[str | None, str | None]:
-    """(위반 사유 또는 None, 대입 완료 narration)."""
+def check_beat(item: dict | None, snapshot: dict, allow_token: bool = True) -> tuple[str | None, str | None]:
+    """(위반 사유 또는 None, 대입 완료 narration). allow_token=False 비트는 토큰 금지·24자(DN2026_0116)."""
     if not item:
         return "missing_beat", None
     line = str(item.get("narration") or "").strip()
@@ -233,11 +237,13 @@ def check_beat(item: dict | None, snapshot: dict) -> tuple[str | None, str | Non
     reason = market_facts.check_line(line)
     if reason:
         return reason, None
+    if not allow_token and market_facts.TOKEN.search(line):
+        return "token_not_allowed", None
     try:
         resolved = market_facts.resolve(line, snapshot)
     except Exception as e:  # noqa: BLE001 — 사유 반환(위반 처리)
         return f"resolve_failed:{type(e).__name__}", None
-    if len(resolved) > MAX_RESOLVED_CHARS:
+    if len(resolved) > (MAX_RESOLVED_CHARS if allow_token else MAX_PLAIN_CHARS):
         return "narration_too_long", None
     if FORBIDDEN.search(resolved):
         return "forbidden_phrase", None
@@ -255,9 +261,10 @@ def _evaluate(raw: str, plan, snapshot):
     if len(parsed) != len(plan):
         logger.warning("script_beat_count_mismatch got=%d want=%d", len(parsed), len(plan))
     results = {}
+    first = plan[0]["cut"] if plan else None
     for cut in plan:
         item = parsed.get(cut["cut"])
-        results[cut["cut"]] = (item, *check_beat(item, snapshot))
+        results[cut["cut"]] = (item, *check_beat(item, snapshot, allow_token=(cut["cut"] == first)))
     return results
 
 

@@ -40,10 +40,11 @@ def test_synthesize_real_wav(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts(calls, secs=[2.0, 5.7, 6.2]))
     monkeypatch.delenv("CAST_TTS_MODEL", raising=False)
     monkeypatch.delenv("TTS_VOICE", raising=False)
-    out = N.synthesize(_beats(), str(tmp_path), budget_sec=6)
+    out = N.synthesize(_beats(), str(tmp_path))
     assert [o["cut"] for o in out] == [1, 2, 3]
     assert out[0]["tempo"] == 1.0 and abs(out[0]["sec"] - 2.0) < 0.05
-    assert abs(out[2]["tempo"] - 6.2 / 5.7) < 0.01
+    # DN2026_0116: 컷 길이 = max(5, ceil(sec+0.6)) → 2.0→5, 5.7→7, 6.2→7 (합 19 ≥ 16)
+    assert [o["cut_sec"] for o in out] == [5, 7, 7] and all(o["tempo"] == 1.0 for o in out)
     assert calls[0]["model"] == "gemini-3.8-flash-tts" and calls[0]["voice"] == "Charon"
     assert calls[0]["tones"] == ["긴박한 톤", "절박한 톤", "차분한 톤"]
 
@@ -57,9 +58,9 @@ def test_tempo_boundaries():
 
 def test_too_long_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts([]))
-    monkeypatch.setattr(N, "_probe", lambda p: 6.6)   # 6.6/5.7 = 1.158 > 1.15
-    with pytest.raises(N.NarrationError, match="narration_too_long cut=1"):
-        N.synthesize(_beats(1), str(tmp_path), budget_sec=6)
+    monkeypatch.setattr(N, "_probe", lambda p: 10.5)   # 10.5/9.4 = 1.117 > 1.10
+    with pytest.raises(N.NarrationError, match="narration_too_long beats=\\[0\\]"):
+        N.synthesize(_beats(1), str(tmp_path))
 
 
 def test_env_model_voice(tmp_path, monkeypatch):
@@ -68,7 +69,7 @@ def test_env_model_voice(tmp_path, monkeypatch):
     monkeypatch.setattr(N, "_probe", lambda p: 3.0)
     monkeypatch.setenv("CAST_TTS_MODEL", "m-x")
     monkeypatch.setenv("TTS_VOICE", "Kore")
-    out = N.synthesize(_beats(2), str(tmp_path), budget_sec=6)
+    out = N.synthesize(_beats(2), str(tmp_path))
     assert calls[0]["model"] == "m-x" and calls[0]["voice"] == "Kore"
     assert all(o["tempo"] == 1.0 for o in out)
 
@@ -77,14 +78,14 @@ def test_reason_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts([], reason="tts:no_api_key"))
     monkeypatch.setattr(N, "_probe", lambda p: 3.0)
     with pytest.raises(N.NarrationError, match="tts:no_api_key"):
-        N.synthesize(_beats(), str(tmp_path), budget_sec=6)
+        N.synthesize(_beats(), str(tmp_path))
 
 
 def test_none_path_raises(tmp_path, monkeypatch):
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts([], none_at=1))
     monkeypatch.setattr(N, "_probe", lambda p: 3.0)
     with pytest.raises(N.NarrationError, match="ok=2/3"):
-        N.synthesize(_beats(), str(tmp_path), budget_sec=6)
+        N.synthesize(_beats(), str(tmp_path))
 
 
 def test_tone_mapping():
@@ -101,3 +102,23 @@ def test_tone_mapping():
 def test_plan_only_counts_chars():
     p = N.plan_only(_beats(2))
     assert p[0] == {"cut": 1, "role": "ESTABLISH_THREAT", "text": "문장 1", "chars": 4}
+
+
+
+def test_fit_cuts_rules():
+    """DN2026_0116 — 실측 길이 → 컷 길이(5~10, tempo ≤1.10), 합계 16 미만 보정, 58 초과 차단."""
+    assert N.fit_cuts([9.68]) == [{"cut_sec": 10, "tempo": 1.0298}] or N.fit_cuts([9.68])[0]["cut_sec"] == 10
+    f = N.fit_cuts([2.0, 2.0, 2.0])                    # 5+5+5=15 < 16 → 한 컷 +1
+    assert sum(x["cut_sec"] for x in f) == 16
+    f = N.fit_cuts([4.0, 7.2, 9.6])
+    assert [x["cut_sec"] for x in f] == [5, 8, 10] and f[2]["tempo"] == round(9.6 / 9.4, 4)
+    with pytest.raises(N.NarrationError, match="narration_total_too_long"):
+        N.fit_cuts([8.5] * 7)                            # 7 × 10 = 70 > 58
+    with pytest.raises(N.NarrationError, match=r"secs=\[1.00,11.00\]"):
+        N.fit_cuts([1.0, 11.0])                          # 실패 시 전체 길이 기록
+
+
+def test_fit_cuts_shadow_measured_case():
+    """shadow run 44133047259 실측: 1번 30자 9.68초 → 10초 컷·tempo 1.0298(차단 아님)."""
+    f = N.fit_cuts([9.68])
+    assert f[0]["cut_sec"] == 10 and abs(f[0]["tempo"] - 9.68 / 9.4) < 1e-3

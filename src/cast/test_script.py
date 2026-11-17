@@ -72,7 +72,7 @@ def test_dry_run_template_no_external_call(monkeypatch, t3):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(C, "_make_client", lambda key: pytest.fail("외부 호출 금지"))
     s = C.build_script("T3", t3, SNAP, decision(), None, "dry_run")
-    assert s["source"] == "template" and s["version"] == 1 and s["ending_type"] == "TEASE"
+    assert s["source"] == "template" and s["version"] == 2 and s["ending_type"] == "TEASE"
     assert [b["cut"] for b in s["beats"]] == [c["cut"] for c in t3]
     assert [b["role"] for b in s["beats"]] == [c["role"] for c in t3]
     assert s["beats"][0]["narration"].startswith("VIX 12.34% 하락")
@@ -102,7 +102,9 @@ def test_all_templates_within_limits(tier, snap):
             assert market_facts.check_line(raw) is None, raw
             assert len(market_facts.TOKEN.sub("", raw)) <= C.MAX_TEMPLATE_CHARS, raw
             resolved = market_facts.resolve(raw, snap)
-            assert len(resolved) <= C.MAX_RESOLVED_CHARS, resolved
+            assert len(resolved) <= (C.MAX_RESOLVED_CHARS if i == 0 else C.MAX_PLAIN_CHARS), resolved   # DN2026_0116
+            if i > 0:
+                assert not market_facts.TOKEN.search(raw), raw
             assert not C.FORBIDDEN.search(resolved), resolved
             sit = C.template_situation(cut, d, C.load_cast_canon())
             assert len(sit.split()) <= C.MAX_SITUATION_WORDS and not any(ch.isdigit() for ch in sit)
@@ -116,7 +118,7 @@ def test_template_fact_fallbacks():
 
 def test_template_payoff_and_villain_attack_form(t3):
     s = C._template_script(t3, decision(omen_payoff="hit"), SNAP, C.load_cast_canon())
-    assert s["beats"][0]["narration"].startswith("예고대로 ")
+    assert s["beats"][1]["narration"].startswith("예고대로 ")   # DN2026_0116: 회수 문구는 2번 비트
     assert "flickering chaotic shadows" in s["beats"][0]["situation_en"]     # volatility attack form
     assert "heavy chains of debt" in s["beats"][-1]["situation_en"]          # omen=rates
     assert "attack" not in s["beats"][1]["situation_en"]
@@ -130,7 +132,7 @@ def test_gemini_ok(client, t3):
     assert [b["cut"] for b in s["beats"]] == [1, 2, 3, 4, 5, 6, 7]
     p = c.prompts[0]
     assert market_facts.prompt_contract(SNAP) in p
-    assert "원칙의 수호자" in p and "splitting into flickering" in p and "28자" in p
+    assert "원칙의 수호자" in p and "splitting into flickering" in p and "24자" in p
 
 
 def test_gemini_violation_retries_once(client, t3):
@@ -238,3 +240,15 @@ def test_merge_second_call_exception_keeps_first_valid(client, t3):
     s = C.build_script("T3", t3, SNAP, decision(), None, "shadow")
     assert s["source"] == "gemini+template"
     assert s["beats"][1]["narration"].startswith("ESCALATE")      # 1차 유효 유지, cut3만 템플릿
+
+
+
+def test_token_only_in_first_beat_and_plain_limit(client, t3):
+    """DN2026_0116 — 2번 이후 비트의 토큰·24자 초과는 위반(재호출→템플릿)."""
+    bad = good_beats(t3, c4="{{FACT:VIX.close}} 공포가 번진다", c5="가나다라마바사아자차카타파하가나다라마바사아자차카")
+    client([bad, bad])
+    s = C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert s["source"] == "gemini+template"
+    assert "VIX" not in s["beats"][3]["narration"] and len(s["beats"][4]["narration"]) <= C.MAX_PLAIN_CHARS
+    reason, _ = C.check_beat({"narration": "{{FACT:VIX.close}} 공포", "situation_en": "x y"}, SNAP, allow_token=False)
+    assert reason == "token_not_allowed"

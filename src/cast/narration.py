@@ -18,6 +18,13 @@ DEFAULT_TTS_MODEL = "gemini-3.8-flash-tts"   # DN2026_0115 — env CAST_TTS_MODE
 DEFAULT_TTS_VOICE = "Charon"
 HEADROOM_SEC = 0.3        # 컷 예산 대비 여유 # DN2026_0115
 MAX_TEMPO = 1.15          # 이보다 빨리 돌려야 하면 대본 길이 초과로 본다 # DN2026_0115
+# DN2026_0116: 컷 길이를 내레이션 실측에 맞춘다(fal duration 5~15 정수, 공식 문서)
+CUT_MIN_SEC = 5
+CUT_MAX_SEC = 10
+CUT_TAIL_SEC = 0.6        # 내레이션 끝 뒤 여유
+FIT_MAX_TEMPO = 1.10      # 10초 컷에 넣기 위한 최대 압축
+TOTAL_MIN_SEC = 16        # 합성 하한 15초 + 1초
+TOTAL_MAX_SEC = 58        # Shorts 60초 이내(합성 상한 60초 - 2초)
 PROBE_TIMEOUT_SEC = 30
 
 # DN2026_0115 — 역할별 낭독 톤(src.tts 가 "다음 대사를 {tone}으로 낭독해라" 로 감싼다)
@@ -83,10 +90,41 @@ def plan_only(beats: list[dict]) -> list[dict]:
              "chars": len(b["narration"])} for b in beats]
 
 
+def fit_cuts(secs: list[float]) -> list[dict]:
+    """DN2026_0116 — 내레이션 실측 길이 → 컷별 {cut_sec(정수), tempo}.
+
+    필요 길이 = sec + 0.6초. 10초 이내면 tempo 1.0·cut_sec=max(5, ceil(필요)).
+    넘치면 10초 컷에 tempo=sec/9.4 (1.10 초과는 오류). 합계 16초 미만이면 짧은 컷부터 1초씩 늘리고,
+    58초 초과면 오류(fal 호출 전). 오류 메시지에 전체 길이를 남긴다(R: 원인 추적).
+    """
+    import math
+    fitted, over = [], []
+    for i, sec in enumerate(secs):
+        need = sec + CUT_TAIL_SEC
+        if need <= CUT_MAX_SEC:
+            fitted.append({"cut_sec": max(CUT_MIN_SEC, math.ceil(need)), "tempo": 1.0})
+            continue
+        tempo = round(sec / (CUT_MAX_SEC - CUT_TAIL_SEC), 4)
+        if tempo > FIT_MAX_TEMPO:
+            over.append(i)
+        fitted.append({"cut_sec": CUT_MAX_SEC, "tempo": tempo})
+    summary = ",".join(f"{s:.2f}" for s in secs)
+    if over:
+        raise NarrationError(f"narration_too_long beats={over} secs=[{summary}]")
+    while sum(f["cut_sec"] for f in fitted) < TOTAL_MIN_SEC:
+        short = min(range(len(fitted)), key=lambda k: fitted[k]["cut_sec"])
+        if fitted[short]["cut_sec"] >= CUT_MAX_SEC:
+            break
+        fitted[short]["cut_sec"] += 1
+    total = sum(f["cut_sec"] for f in fitted)
+    if total > TOTAL_MAX_SEC:
+        raise NarrationError(f"narration_total_too_long total={total}s secs=[{summary}]")
+    return fitted
+
+
 def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
-               model: str | None = None, voice: str | None = None,
-               budget_sec: float) -> list[dict]:
-    """비트별 내레이션 합성 → [{cut, wav, sec, tempo}]. # DN2026_0115"""
+               model: str | None = None, voice: str | None = None) -> list[dict]:
+    """비트별 내레이션 합성 → [{cut, wav, sec, tempo, cut_sec}]. # DN2026_0115 → DN2026_0116(컷 맞춤)"""
     if not beats:
         raise NarrationError("beats 없음")
     texts = []
@@ -98,7 +136,7 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     model = model or os.environ.get("CAST_TTS_MODEL") or DEFAULT_TTS_MODEL
     voice = voice or os.environ.get("TTS_VOICE") or DEFAULT_TTS_VOICE
     tones = [tone_for(b.get("role")) for b in beats]
-    logger.info("narration_start beats=%d model=%s voice=%s budget=%.1fs", len(beats), model, voice, budget_sec)
+    logger.info("narration_start beats=%d model=%s voice=%s", len(beats), model, voice)
 
     paths, reason = _tts_fn()(texts, output_dir=out_dir, tones=tones,
                               voice_name=voice, model_name=model)
@@ -106,12 +144,13 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
         ok = sum(1 for p in paths if p)
         raise NarrationError(f"tts_failed reason={reason} ok={ok}/{len(beats)}")
 
+    secs = [_probe(wav) for wav in paths]
+    for b, sec, text in zip(beats, secs, texts):
+        logger.info("narration_measured cut=%s sec=%.2f chars=%d", b["cut"], sec, len(text))
+    fitted = fit_cuts(secs)
     out: list[dict] = []
-    for b, wav in zip(beats, paths):
-        sec = _probe(wav)
-        tempo = tempo_for(sec, budget_sec)
-        if tempo > MAX_TEMPO:
-            raise NarrationError(f"narration_too_long cut={b['cut']} sec={sec:.2f} budget={budget_sec}")
-        out.append({"cut": int(b["cut"]), "wav": str(wav), "sec": round(sec, 3), "tempo": tempo})
-        logger.info("narration_cut cut=%s sec=%.2f tempo=%.3f", b["cut"], sec, tempo)
+    for b, wav, sec, f in zip(beats, paths, secs, fitted):
+        out.append({"cut": int(b["cut"]), "wav": str(wav), "sec": round(sec, 3),
+                    "tempo": f["tempo"], "cut_sec": f["cut_sec"]})
+    logger.info("narration_fitted cuts=%s total=%ds", [o["cut_sec"] for o in out], sum(o["cut_sec"] for o in out))
     return out

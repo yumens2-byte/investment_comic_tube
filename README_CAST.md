@@ -9,7 +9,7 @@ EDT 일간 라인(pipeline.yml)과 병렬로 도는 주 1회 파이프라인이�
 |---|---|---|
 | test | `pytest src/cast/` | 없음 |
 | plan | 시장 데이터 수집 → 등급(T1/T2/T3) → 캐스팅 → `cast_plan.json`(tier·plan·mode·run_id·run_date_kst·villain·market_snapshot) | 시장 데이터 API |
-| generate | REF URL 확인 → fal minimax/h3 i2v 컷 생성(컷 6초) → `generate_ledger.json` | dry_run: fal·DB 0 / shadow·live: fal + cast_runs |
+| generate | REF URL 확인 → fal minimax/h3 i2v 컷 생성(내레이션 회차: 컷별 5~10초, 그 외 `CAST_CUT_SEC`) → `generate_ledger.json` | dry_run: fal·DB 0 / shadow·live: fal + cast_runs |
 | publish | shadow: CAST 전용 합성(compose.py)만 하고 결과 artifact를 남긴다. live: 합성 → cast_runs claim → YouTube 업로드 → published 기록 | shadow: 없음 / live: YouTube, cast_runs |
 | report | 결과를 텔레그램으로 알림(실패해도 run 결과는 바뀌지 않음) | Telegram |
 | cast_watchdog | 토 KST 15:43. 오늘 schedule 실행이 성공했는지 조회 | GitHub API, Telegram |
@@ -49,12 +49,14 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 - **plan 진입점**: `python -m src.cast.__main__plan` 모듈로 실행한다(워크플로 heredoc에서 옮김, 테스트 대상).
 - **대본**(plan, `script.py`):
   - Gemini(`gemini-3.6-flash`)가 비트별 한국어 1문장과 영문 상황값을 만든다.
-  - 수치는 FACT 토큰으로만 넣는다(`market_facts`). 문장 길이 상한은 36자, 투자 권유 금칙어를 검사한다.
+  - 수치는 FACT 토큰으로만 넣는다(`market_facts`). 문장 길이 상한은 첫 비트 30자(지표 토큰 1개 허용, 대입 후), 나머지 24자(숫자·토큰 금지)이고, 투자 권유 금칙어를 검사한다(DN2026_0116, 실측 낭독 속도 초당 약 3.1자).
   - 위반이 있으면 1회 재호출하고, 그래도 위반인 비트는 템플릿 문장으로 바꾼다.
   - dry_run과 키가 없는 경우에는 결정적 템플릿을 쓴다(외부 호출 0).
-- **TTS**(generate, `narration.py`): 내레이션 회차는 `CAST_CUT_SEC` 6 이상이어야 한다(5면 T1 합계가 15초 경계에 걸려 차단).
+- **TTS**(generate, `narration.py`): 내레이션 회차는 `CAST_CUT_SEC`를 쓰지 않고 TTS 실측으로 컷 길이를 정한다(DN2026_0116).
   - `src.tts.synthesize_narrations`로 합성한다. 모델은 `CAST_TTS_MODEL`(기본 gemini-3.8-flash-tts), 음성은 `TTS_VOICE`(기본 Charon)이다.
-  - 첫 fal 제출 전에 실행한다. 컷(6초)에 넣으려면 1.15배를 넘게 압축해야 하는 문장이 있으면 fal 호출 없이 차단한다.
+  - 첫 fal 제출 전에 실행한다. 컷 길이 = max(5, ceil(내레이션 + 0.6초)), 10초를 넘으면 10초 컷에 최대 1.10배로 압축한다.
+  - 1.10배를 넘는 문장, 7컷 합계 58초 초과는 fal 호출 없이 차단하고 전 비트 길이를 오류에 남긴다. 합계 16초 미만이면 짧은 컷부터 1초씩 늘린다.
+  - 비용 가드: 사전에는 최악값(전 컷 10초), TTS 후 실측 컷 길이로 회당·월 상한을 다시 판정한다. fal 제출마다 해당 컷 길이로 가산한다.
 - **합성**(publish, `compose.py`):
   - 컷 길이는 max(5초, 내레이션 길이 + 0.6초)로 자르고, 원본 컷보다 길게 늘이지 않는다.
   - 내레이션은 컷 시작점에 배치하고 BGM 0.15와 섞은 뒤 loudnorm -14 LUFS로 맞춘다.

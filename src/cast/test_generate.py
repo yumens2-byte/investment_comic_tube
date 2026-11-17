@@ -462,9 +462,9 @@ def test_script_shadow_flow_tts_then_v2_prompts(script_env, monkeypatch):
     order, prompts, stories = [], [], []
     monkeypatch.setattr(L, "record_story", lambda *a: stories.append(a) or order.append("story"),
                         raising=False)
-    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: order.append(("tts", k["budget_sec"]))
-                        or [{"cut": b["cut"], "wav": f"{out}/n{b['cut']}.wav", "sec": 3.0, "tempo": 1.0}
-                            for b in beats])
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: order.append("tts")
+                        or [{"cut": b["cut"], "wav": f"{out}/n{b['cut']}.wav", "sec": 3.0, "tempo": 1.0,
+                             "cut_sec": 6 + b["cut"]} for b in beats])
     submits = []
     fake = _fake_cut(submits)
 
@@ -474,7 +474,7 @@ def test_script_shadow_flow_tts_then_v2_prompts(script_env, monkeypatch):
         return fake(request, out, **k)
     monkeypatch.setattr(G, "generate_cut", cut)
     gen_main.main()
-    assert order[:2] == ["story", ("tts", 6)] and order[2:] == ["fal"] * 3
+    assert order[:2] == ["story", "tts"] and order[2:] == ["fal"] * 3
     assert stories[0] == ("777", "Debt Titan", {"ep": 2}, _script(3))
     assert all(p.startswith("Comic-book cinematic vertical shot.") for p in prompts)
     assert "flickering chaotic shadows" in prompts[0] and "Situation 2." in prompts[1]
@@ -513,7 +513,7 @@ def test_script_without_record_story_still_runs(script_env, monkeypatch):
     script_env["write_script"](3, "shadow")
     monkeypatch.delattr(L, "record_story", raising=False)
     monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
-        {"cut": b["cut"], "wav": "w", "sec": 3.0, "tempo": 1.0} for b in beats])
+        {"cut": b["cut"], "wav": "w", "sec": 3.0, "tempo": 1.0, "cut_sec": 6} for b in beats])
     submits = []
     monkeypatch.setattr(G, "generate_cut", _fake_cut(submits))
     gen_main.main()
@@ -543,16 +543,31 @@ def test_no_script_keeps_legacy_prompt(script_env, monkeypatch):
     assert "narration" not in script_env["ledger"]()
 
 
-def test_narration_requires_cut_sec_6(script_env, monkeypatch):
-    """R6-06 D3 — 내레이션 회차에서 CAST_CUT_SEC=5는 과금 전 차단(T1 합계 15초 경계)."""
-    script_env["write_script"](3, "live")
-    monkeypatch.setenv("CAST_CUT_SEC", "5")
-    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
-    with pytest.raises(G.GenerationError, match="cut_sec_too_short_for_narration"):
-        gen_main.main()
-    assert script_env["add"] == [] and script_env["open"] == []
-    assert script_env["ledger"]()["error"] == "GenerationError:cut_sec_too_short_for_narration"
+def test_fitted_durations_drive_fal_and_cost(script_env, monkeypatch):
+    """DN2026_0116 — TTS 실측 컷 길이가 fal duration·비용 가산·재판정에 쓰인다."""
+    script_env["write_script"](3, "shadow")
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": "w", "sec": 3.0, "tempo": 1.0, "cut_sec": c}
+        for b, c in zip(beats, (5, 8, 10))])
+    durations = []
+    fake = _fake_cut([])
+    monkeypatch.setattr(G, "generate_cut", lambda req, out, **k: durations.append(req["duration"]) or fake(req, out, **k))
+    gen_main.main()
+    assert durations == [5, 8, 10]
+    assert script_env["add"] == [0.3, 0.48, 0.6]
+    assert script_env["ledger"]()["planned_cost_usd"] == round(23 * 0.06, 2)
 
+
+def test_fitted_cost_over_cap_blocks_before_fal(script_env, monkeypatch):
+    script_env["write_script"](3, "shadow")
+    monkeypatch.setenv("CAST_RUN_CAP_USD", "2.0")       # 사전 최악값 1.8 통과
+    monkeypatch.setattr(L, "open_run", lambda *a: 0.9)  # 직전 누적 0.9 → 실측 1.8 + 0.9 > 2.0 (TTS 후 재판정)
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": "w", "sec": 9.0, "tempo": 1.0, "cut_sec": 10} for b in beats])
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    with pytest.raises(G.GenerationError, match="cost_cap_run"):
+        gen_main.main()
+    assert script_env["add"] == []
 
 def test_next_omen_prompt_uses_omen_axis():
     """R6-05 #14 — NEXT_OMEN 컷은 다음 주 예고 축의 공격 형태를 쓴다."""
@@ -564,3 +579,17 @@ def test_next_omen_prompt_uses_omen_axis():
     assert forms["rates"] in p and forms["volatility"] not in p
     other = {"cut": 4, "role": "CRISIS", "characters": ["Debt Titan", "FG-01"]}
     assert forms["volatility"] in gen_main._cut_prompt(other, beat, canon, "volatility", "rates")
+
+
+
+def test_prior_cost_judged_on_fitted_not_worst_case(script_env, monkeypatch):
+    """DN2026_0116 — 재실행 prior가 있어도 실측 컷 길이로 판정(최악값 10초로 막지 않음)."""
+    script_env["write_script"](3, "shadow")
+    monkeypatch.setenv("CAST_RUN_CAP_USD", "2.0")
+    monkeypatch.setattr(L, "open_run", lambda *a: 0.9)  # 최악값 1.8+0.9=2.7>2.0 이지만 실측 15초=0.9 → 1.8 통과
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": "w", "sec": 3.0, "tempo": 1.0, "cut_sec": 5} for b in beats])
+    fake = _fake_cut([])
+    monkeypatch.setattr(G, "generate_cut", fake)
+    gen_main.main()
+    assert script_env["add"] == [0.3, 0.3, 0.3]
