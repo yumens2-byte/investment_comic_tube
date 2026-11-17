@@ -98,3 +98,17 @@ def test_villain_only_cut_has_no_hero_after_filter():
         first = [c for c in plan[0]["characters"] if c in HEROES]
         assert first == [], f"{tier} 1컷(빌런 단독)에서 히어로 오인: {first}"
     assert [c for c in cast_for_tier("T1")[0]["characters"] if c in HEROES] == ["EDT"]
+
+
+def test_build_cast_scenes_orders_cuts():
+    """live 합성 입력 계약 — 컷 번호 정렬·storyboard 필드."""
+    from src.cast import publish as cp
+
+    cuts = [
+        {"cut": 2, "path": "b.mp4", "duration_sec": 10},
+        {"cut": 1, "path": "a.mp4", "duration_sec": 10},
+    ]
+    scenes = cp.build_cast_scenes(cuts)
+    assert [s["beat_no"] for s in scenes] == [1, 2]
+    assert [s["image"] for s in scenes] == ["a.mp4", "b.mp4"]
+    assert all(s["source"] == "fal_i2v" for s in scenes)
