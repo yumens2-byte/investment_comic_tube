@@ -1,10 +1,13 @@
-# CAST-LINE T3 — 주 1회 앙상블 대표작 (2026-11-17 상세설계 v1.0 §6 준용)
-# 기존 EDT 라인(pipeline.yml)과 병렬 — 충돌 자원 5건 분리 완료 설계:
+# CAST-LINE T3 — 주 1회 앙상블 대표작 (2026-11-17 상세설계 v1.0 §6 준용, DN2026_0114 P0 안전화)
+# 기존 EDT 라인(pipeline.yml)과 병렬 — 충돌 자원 5건 분리:
 #   C1 스케줄: 토요일 KST 09:43 (일간 10:17과 충돌 없음, 정각 회피 패턴 준수)
 #   C2 동시실행: 독립 그룹 edt-cast-production
-#   C3 원장: 라인 구분(line=cast) — daily 무손실
-#   C4 중복게이트: 라인별 분리 (validate_not_published_today 확장 예정)
-#   C5 채널키: EDT_UNIVERSE_CAST (Variable)
+#   C3 원장: 전용 원장 cast_runs (supabase/migrations/004_cast_runs.sql) — episodes 무변경
+#   C4 중복게이트: cast_runs 부분 unique 인덱스(run_date_kst, uploading/published) — 하루 1회 발행
+#   C5 채널키: EDT_UNIVERSE_CAST (Variable PIPELINE_CHANNEL_KEY_CAST)
+# 모드(DN2026_0114): dispatch inputs.mode → vars.CAST_EXECUTION_MODE → dry_run.
+#   plan이 resolve_mode로 정규화(3값 외 dry_run 강등)해 outputs.mode로 하위 job에 전달한다.
+#   dry_run: fal·DB 0회 / shadow: 생성+원장, 발행 없음 / live: 전체
 name: EDT Cast T3 (주 1회 앙상블)
 
 permissions:
@@ -23,9 +26,9 @@ on:
         description: '계층 강제 (auto=시장데이터 판정)'
         type: choice
         default: auto
-        options: [auto, T1, T3]
+        options: [auto, T1, T2, T3]
       mode:
-        description: '실행 모드 (dry_run 기본 — live는 Variable 게이트)'
+        description: '실행 모드 (dry_run 기본 — 3값 외 입력은 dry_run 강등)'
         type: choice
         default: dry_run
         options: [dry_run, shadow, live]
@@ -33,7 +36,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -46,113 +49,182 @@ jobs:
     needs: test
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}   # DN2026_0114 정규화 모드
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: '3.12', cache: 'pip' }
       - run: pip install -r requirements.txt
       - name: 계층 판정 + 캐스팅 계획 (0원)
+        id: plan
         env:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+          CAST_EXECUTION_MODE: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode) || vars.CAST_EXECUTION_MODE || 'dry_run' }}  # DN2026_0114
+          CAST_TIER_FORCE: ${{ inputs.tier_force || 'auto' }}
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast
           python - <<'PY'
-          import json, logging
-          from src.collector import fetch_market_data
-          from src.cast import classify_tier, cast_for_tier
+          # DN2026_0114 — 모드 정규화·run 메타 기록
+          import json, logging, os
+          from datetime import datetime, timedelta, timezone
+          from src.cast import VERSION, classify_tier, cast_for_tier
+          from src.cast.mode import resolve_mode
           logging.basicConfig(level=logging.INFO)
+          log = logging.getLogger("cast.plan")
+          mode = resolve_mode(os.environ.get("CAST_EXECUTION_MODE"))
+          log.info("[CAST] v%s 시작 stage=plan mode=%s", VERSION, mode)
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"mode={mode}\n")
+          from src.collector import fetch_market_data
           data = fetch_market_data()
-          tier = "${{ inputs.tier_force || 'auto' }}"
-          if tier == 'auto':
+          tier = (os.environ.get("CAST_TIER_FORCE") or "auto").strip()
+          if tier not in ("T1", "T2", "T3"):
               tier = classify_tier(data)
           plan = cast_for_tier(tier)
-          out = {"tier": tier, "plan": plan}
+          out = {
+              "tier": tier,
+              "plan": plan,
+              "mode": mode,
+              "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
+              "run_date_kst": datetime.now(timezone(timedelta(hours=9))).date().isoformat(),
+              "villain": "Debt Titan",
+              "market_snapshot": json.loads(json.dumps(data, default=str)),
+          }
           with open("artifacts_cast/cast_plan.json", "w") as f:
-              json.dump(out, f, ensure_ascii=False, indent=1)
-          print(json.dumps(out, ensure_ascii=False, indent=1)[:2000])
+              json.dump(out, f, ensure_ascii=False, indent=1, default=str)
+          print(json.dumps({k: v for k, v in out.items() if k != "market_snapshot"},
+                           ensure_ascii=False, indent=1)[:2000])
           PY
       - name: Upload cast plan
         if: always()
         uses: actions/upload-artifact@v5
         with:
           name: cast-plan-${{ github.run_id }}
+          overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
           path: artifacts_cast/
 
   generate:
     needs: plan
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50   # CAST_GEN_BUDGET_SEC 2400(40분) + 설치·다운로드·업로드 여유 (CI-13)
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: '3.12', cache: 'pip' }
+      - name: ffmpeg 설치 (ffprobe 컷 검증용)   # DN2026_0114
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffprobe -version | head -1
       - run: pip install -r requirements.txt
       - uses: actions/download-artifact@v5
         with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
-      - name: REF URL 자동재발급 (1시간 만료 — 실행 시점마다 갱신)
+      - name: REF URL 해석 (저장소 assets/refs raw URL — 만료 없음, 부록 S)
         run: |
           export PYTHONPATH=$(pwd)
           python -c "from src.cast.refresh_refs import refresh; r = refresh(); print('refreshed:', sorted(r))"
-      - name: fal i2v 생성 (모드 게이트 — dry_run은 호출 0회)
+      - name: fal i2v 생성 (모드 게이트 — dry_run은 fal·DB 호출 0회)
         env:
           FAL_AI_KEY: ${{ secrets.FAL_AI_KEY }}
-          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CAST_EXECUTION_MODE: ${{ needs.plan.outputs.mode }}
+          # DN2026_0114 — 원장(cast_runs)·비용 상한·컷 길이·시간 예산
+          CAST_RUN_CAP_USD: ${{ vars.CAST_RUN_CAP_USD || '5' }}
+          CAST_MONTH_CAP_USD: ${{ vars.CAST_MONTH_CAP_USD || '30' }}
+          CAST_CUT_SEC: ${{ vars.CAST_CUT_SEC || '6' }}
+          CAST_GEN_BUDGET_SEC: '2400'
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast
-          # plan artifact 다운로드 대신 plan job 산출을 전달받는다(run artifact 체인).
-          # fal은 젠스파크 래퍼 URL 다운로드 불가(422) → REF는 AI Drive readable URL 경유 주입 (부록 E 확정)
-          echo "MODE=$CAST_EXECUTION_MODE — dry_run: 호출 0회, shadow: 생성만, live: 전체"
+          # REF는 refresh_refs가 저장소 assets/refs raw URL로 해석한다(fal은 젠스파크 래퍼 URL 422 — 부록 E·S)
+          echo "MODE=$CAST_EXECUTION_MODE — dry_run: 호출 0회, shadow: 생성+원장, live: 전체"
           python -m src.cast.__main__generate
       - name: Upload generation artifacts (컷 mp4·원장)
-        if: always()
+        # DN2026_0114 (R6-03 #2): 컷이 없는 재실행(중복 차단 등)이 기존 컷 artifact를 overwrite로 지우지 않게 한다
+        if: always() && hashFiles('artifacts_cast/cut_*.mp4') != ''
         uses: actions/upload-artifact@v5
         with:
           name: 'cast-cuts-${{ github.run_id }}'
+          overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
           path: artifacts_cast/
+      - name: Upload generation ledger (리포트용 경량 원장)   # DN2026_0114
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: 'cast-ledger-${{ github.run_id }}'
+          overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
+          path: artifacts_cast/generate_ledger.json
+          if-no-files-found: ignore
 
   publish:
-    needs: generate
+    needs: [plan, generate]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    if: vars.CAST_EXECUTION_MODE == 'live'
+    timeout-minutes: 20   # DN2026_0114 (CI-13)
+    # DN2026_0114 (R4-04): shadow도 러너 합성까지 검증한다 — publish_cast가 shadow에서 원장·업로드 0을 보장
+    if: (needs.plan.outputs.mode == 'live' || needs.plan.outputs.mode == 'shadow') && needs.generate.result == 'success'   # DN2026_0114
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
         with: { python-version: '3.12', cache: 'pip' }
+      - name: ffmpeg 설치 (합성·검증용)   # DN2026_0114
+        run: |
+          sudo apt-get update && sudo apt-get install -y ffmpeg
+          ffprobe -version | head -1
       - run: pip install -r requirements.txt
       - uses: actions/download-artifact@v5
         with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
       - uses: actions/download-artifact@v5
         with: { name: 'cast-cuts-${{ github.run_id }}', path: artifacts_cast }
-      - name: 합성·발행 (live 모드만 — renderer 합성 재용 + YouTube 업로드)
+      - name: 합성·발행 (shadow=합성만 / live=합성+YouTube 업로드, DN2026_0114)
         env:
-          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+          CAST_EXECUTION_MODE: ${{ needs.plan.outputs.mode }}
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          # DN2026_0114 — 플레이리스트·공개범위·채널키
+          YOUTUBE_PLAYLIST_TITLE: ${{ vars.CAST_PLAYLIST_TITLE || 'EDT_UNIVERSE_CAST' }}
+          CAST_YOUTUBE_PRIVACY: ${{ vars.CAST_YOUTUBE_PRIVACY || 'private' }}
+          PIPELINE_CHANNEL_KEY: ${{ vars.PIPELINE_CHANNEL_KEY_CAST || 'EDT_UNIVERSE_CAST' }}
         run: |
           export PYTHONPATH=$(pwd)
           python -m src.cast.__main__publish
+      - name: Upload publish result (video_id 대사 근거 — mark 실패 시 수동 정정용)   # DN2026_0114 (R6-01 #13)
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: 'cast-publish-${{ github.run_id }}'
+          overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
+          path: artifacts_cast/publish_result.json
+          if-no-files-found: ignore
 
   report:
-    needs: [plan, generate]
+    needs: [plan, generate, publish]
     if: always()
     runs-on: ubuntu-24.04
+    timeout-minutes: 5   # DN2026_0114 (CI-13)
     steps:
-      - name: 결과 리포트 (텔레그램)
-        continue-on-error: true   # 리포트 유실은 run conclusion을 바꾸지 않는다(부록 AB)
+      - uses: actions/checkout@v5   # DN2026_0114 — report.py 실행에 소스 필요
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12' }
+      - uses: actions/download-artifact@v5
+        continue-on-error: true   # plan 실패 시 artifact 부재 — 리포트는 미확정으로 진행
+        with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
+      - uses: actions/download-artifact@v5
+        continue-on-error: true   # generate 미실행·실패 시 artifact 부재 (mp4 제외 경량 원장만 — DN2026_0114)
+        with: { name: 'cast-ledger-${{ github.run_id }}', path: artifacts_cast }
+      - name: 결과 리포트 (텔레그램 — report.main은 예외를 전파하지 않는다, 부록 Z-2)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          CAST_RUN_CONCLUSION: ${{ contains(needs.generate.result, 'success') && 'generate 성공' || 'generate 실패' }}
-          CAST_RUN_TIER: ${{ needs.plan.result == 'success' && '기록은 plan artifact 참조' || '' }}
+          CAST_RESULT_PLAN: ${{ needs.plan.result }}
+          CAST_RESULT_GENERATE: ${{ needs.generate.result }}
+          CAST_RESULT_PUBLISH: ${{ needs.publish.result }}
         run: |
           export PYTHONPATH=$(pwd)
           python -m src.cast.report

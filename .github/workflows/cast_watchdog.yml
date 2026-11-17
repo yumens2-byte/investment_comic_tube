@@ -1,45 +1,82 @@
-# CAST-LINE 워치독 — 능동 조회형 (investment-os hero_shorts_watchdog 패턴 이식)
+# CAST-LINE 워치독 — 능동 조회형 (investment-os hero_shorts_watchdog 패턴 이식, DN2026_0114 판정 정확화)
 # 왜 필요한가: Actions 스케줄러 지연 실측(4h42m, 투자os 실측; 본 저장소도 05~06시 UTC 지연 관측).
-# 실행 이벤트를 기다리지 않고, 기대 발화 시각(토 KST 09:43 = UTC 00:43) + 유예 6h 내 증거를 조회한다.
+# 실행 이벤트를 기다리지 않고, 기대 발화 시각(토 KST 09:43 = UTC 00:43) + 정확히 6h(= UTC 06:43)에 증거를 조회한다.
+# 판정(DN2026_0114): 오늘 UTC 00:43 이후 생성된 cast_t3 run 중 event=schedule만 대상
+#   - conclusion=success 1건 이상 → OK
+#   - schedule run은 있으나 성공 없음(failure/cancelled/in_progress 등) → "실패/미완" 경보
+#   - schedule run 0건 → "미발화" 경보
+#   - API 조회 실패 → "조회 실패" 경보(미발화와 구분)
+#   - 토요일(UTC)이 아닌 날의 수동 실행 → "점검일 아님" 출력 후 종료(경보 없음)
 name: CAST Watchdog
+
+permissions:
+  actions: read
+  contents: read
 
 on:
   schedule:
-    - cron: '23 2 * * 6'   # 토 KST 11:23 — 기대발화 00:43Z + 유예 6h 뒤 점검
+    - cron: '43 6 * * 6'   # 토 UTC 06:43 (KST 15:43) — 기대발화 00:43Z + 6h
   workflow_dispatch: {}
 
 jobs:
   check:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     env:
       TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TG_CHAT: ${{ secrets.TELEGRAM_CHAT_ID }}
     steps:
-      - uses: actions/checkout@v5
-      - name: 증거 조회 (cast_t3 워크플로우 오늘 발화 여부)
+      - name: 증거 조회·판정·경보 (cast_t3 오늘 schedule 발화·성공 여부)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
-          TOKEN="${{ secrets.GITHUB_TOKEN }}"
-          REPO="${{ github.repository }}"
-          SINCE=$(date -u -d '18 hours ago' +%Y-%m-%dT%H:%M:%SZ)
-          RUNS=$(curl -s -H "Authorization: Bearer $TOKEN" \
-            "https://api.github.com/repos/$REPO/actions/workflows/cast_t3.yml/runs?created=>=$SINCE&per_page=10")
-          COUNT=$(echo "$RUNS" | python3 -c "import sys,json;print(len(json.load(sys.stdin).get('workflow_runs',[])))")
-          echo "cast_t3 최근 18h 발화 수: $COUNT"
-          if [ "$COUNT" -eq 0 ]; then
-            echo "missed — cast_t3가 유예 시간 내 발화하지 않음"
-            exit 3
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$(date -u +%u)" != "6" ]; then
+            echo "점검일 아님 — UTC 토요일이 아닌 수동 실행, 경보 없음"
+            exit 0
           fi
-      - name: 텔레그램 경보 (missed 시)
-        if: failure()
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" \
-            -d text="⚠️ CAST-LINE 워치독: cast_t3 워크플로우 유예시간(기대발화+6h) 내 미발화 — 즉시 점검 필요" \
-            > /dev/null || echo "telegram_failed (Secrets 미설정)"
-      - name: 정상 리포트
-        if: success()
-        run: |
-          curl -s -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
-            -d chat_id="${TG_CHAT}" \
-            -d text="✅ CAST-LINE 워치독: cast_t3 정상 발화 확인" \
-            > /dev/null || echo "telegram_failed (Secrets 미설정)"
+          SINCE=$(date -u +%Y-%m-%dT00:43:00Z)
+          if curl -fsS -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/$REPO/actions/workflows/cast_t3.yml/runs?created=%3E%3D$SINCE&per_page=50" \
+              -o runs.json; then
+            VERDICT=$(SINCE="$SINCE" python3 - <<'PY'
+          import json, os
+          since = os.environ["SINCE"]
+          try:
+              with open("runs.json") as f:
+                  runs = json.load(f).get("workflow_runs")
+              if not isinstance(runs, list):
+                  raise ValueError("workflow_runs 부재")
+          except Exception as e:
+              print(f"QUERY_FAIL|응답 해석 실패({type(e).__name__})")
+              raise SystemExit(0)
+          sched = [r for r in runs
+                   if r.get("event") == "schedule" and (r.get("created_at") or "") >= since]
+          if any(r.get("conclusion") == "success" for r in sched):
+              print(f"OK|schedule run {len(sched)}건 중 성공 확인")
+          elif sched:
+              states = ",".join(sorted({f"{r.get('status')}/{r.get('conclusion')}" for r in sched}))
+              print(f"FAILED|schedule run {len(sched)}건 성공 없음({states})")
+          else:
+              print("MISSED|schedule run 0건")
+          PY
+            )
+          else
+            VERDICT="QUERY_FAIL|GitHub API 조회 실패"
+          fi
+          KIND="${VERDICT%%|*}"
+          DETAIL="${VERDICT#*|}"
+          echo "판정: $KIND — $DETAIL (since=$SINCE)"
+          case "$KIND" in
+            OK)         MSG="CAST-LINE 워치독: cast_t3 정상 — $DETAIL" ;;
+            FAILED)     MSG="⚠️ CAST-LINE 워치독: cast_t3 실패/미완 — $DETAIL. 즉시 점검 필요" ;;
+            MISSED)     MSG="⚠️ CAST-LINE 워치독: cast_t3 미발화 — 기대발화(00:43Z)+6h 내 schedule run 없음" ;;
+            *)          MSG="⚠️ CAST-LINE 워치독: 조회 실패 — $DETAIL (발화 여부 미확정)" ;;
+          esac
+          curl -fsS -X POST "https://api.telegram.org/bot${TG_TOKEN}/sendMessage" \
+            -d chat_id="${TG_CHAT}" --data-urlencode text="$MSG" > /dev/null \
+            || echo "telegram_failed"
+          if [ "$KIND" != "OK" ]; then
+            exit 1
+          fi
