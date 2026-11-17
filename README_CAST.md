@@ -46,6 +46,7 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
   - 2순위 축은 다음 주 예고(omen)로 쓴다. 다음 회차는 예고가 맞았는지(hit) 빗나갔는지(twist)를 회수한다.
   - TURN 비트 주역은 축으로 정한다. 금리는 EDT, 변동성은 FG-01, 과열은 LEV-01이다.
   - 시즌은 4주, 같은 빌런은 최대 3주 연속이다.
+- **plan 진입점**: `python -m src.cast.__main__plan` 모듈로 실행한다(워크플로 heredoc에서 옮김, 테스트 대상).
 - **대본**(plan, `script.py`):
   - Gemini(`gemini-3.6-flash`)가 비트별 한국어 1문장과 영문 상황값을 만든다.
   - 수치는 FACT 토큰으로만 넣는다(`market_facts`). 문장 길이 상한은 36자, 투자 권유 금칙어를 검사한다.
@@ -100,4 +101,4 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 ## 테스트
 
-`PYTHONPATH=. python -m pytest -q src/cast/` — 231 passed (2026-11-18, 기준 e3745a2의 41에서 증가).
+`PYTHONPATH=. python -m pytest -q src/cast/` — 237 passed (2026-11-18, 기준 e3745a2의 41에서 증가).

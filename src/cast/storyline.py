@@ -71,12 +71,25 @@ def _ending_type(prev: dict | None) -> str:
         return FALLBACK_ENDINGS[0]
 
 
-def decide(market_data: dict, prev: dict | None, canon: dict | None = None) -> dict:
+def _same_iso_week(a: str | None, b: str | None) -> bool:
+    from datetime import date
+    try:
+        return date.fromisoformat(str(a)[:10]).isocalendar()[:2] == date.fromisoformat(str(b)[:10]).isocalendar()[:2]
+    except (TypeError, ValueError):
+        return False
+
+
+def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
+           run_date_kst: str | None = None) -> dict:
     """이번 회차 스토리 결정. prev = ledger.fetch_last_story() 결과 또는 None."""
     canon = canon or load_cast_canon()
     allowed = allowed_villains(canon)
     prev_ss = dict((prev or {}).get("story_state") or {})
-    prev_state = {"villain": prev.get("villain"), "story_state": prev_ss} if prev else None
+    # DN2026_0115 (R6-05 #1): 회전·스트릭은 게이트 전 이름(villain_raw) 기준이어야 한다.
+    # 원장 villain 컬럼은 게이트 후 이름(현재 항상 Debt Titan)이라 그대로 넘기면 회전이 깨진다.
+    prev_raw = prev_ss.get("villain_raw") or (prev or {}).get("villain") or prev_ss.get("villain")
+    prev_state = ({"villain": prev_raw, "story_state": {"villain_streak": prev_ss.get("villain_streak")}}
+                  if prev else None)
 
     villain_raw, _theme, scores = select_villain(market_data, prev_state)
     axis = AXIS[villain_raw]
@@ -88,14 +101,19 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None) -> d
     omen_axis = AXIS[omen_raw]
     omen_villain = gate(omen_raw, allowed)
 
-    if prev:
+    if prev and run_date_kst and _same_iso_week(prev.get("run_date_kst"), run_date_kst):
+        # DN2026_0115 (R6-05 #15): 같은 주 재실행(수동 shadow 등)은 주차·스트릭을 올리지 않는다
+        season = int(prev_ss.get("season_no") or 1)
+        week = int(prev_ss.get("season_week") or 1)
+        streak = int(prev_ss.get("villain_streak") or 1) if prev_raw == villain_raw else 1
+    elif prev:
         week = int(prev_ss.get("season_week") or 0) + 1
         season = int(prev_ss.get("season_no") or 1)
         if week > SEASON_WEEKS:
             season, week = season + 1, 1
-        prev_villain = prev.get("villain") or prev_ss.get("villain")
         prev_streak = prev_ss.get("villain_streak")
-        streak = (int(prev_streak) + 1 if isinstance(prev_streak, int) else 2) if prev_villain == villain else 1
+        streak = ((int(prev_streak) + 1 if isinstance(prev_streak, int) else 2)
+                  if prev_raw == villain_raw else 1)   # raw 기준(R6-05 #1)
     else:
         season, week, streak = 1, 1, 1
 

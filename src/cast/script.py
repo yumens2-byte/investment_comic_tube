@@ -27,7 +27,14 @@ MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 MAX_RESOLVED_CHARS = 36        # 검증: 토큰 대입 후 36자
 MAX_SITUATION_WORDS = 45
 # DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
-FORBIDDEN = re.compile(r"매수|매도|사라[.!?]?$|사세요|팔아라|파세요|수익\s*보장|무조건|확실한\s*수익")
+# R6-05 #9: 매매 동사 + 명령형 어미까지 확장("담아라", "팔아", "사두세요", 문중 "사라,")
+_END = r"(?=[\s.,!?…]|$)"
+FORBIDDEN = re.compile(
+    r"매수하|매도하|매수\s*추천|매도\s*추천|수익\s*보장|무조건|확실한\s*수익"
+    rf"|(?:사|팔|담|사\s*두|사\s*모|정리하|던지)(?:라|아라|어라|세요|십시오|아|어){_END}"
+    rf"|파세요{_END}")
+# R6-05 #8: 자막 폰트 미지원 글리프(이모지 등)를 과금 전에 차단 — 한글·ASCII·기본 문장부호만
+ALLOWED_CHARS = re.compile(r"^[가-힣ㄱ-ㅎㅏ-ㅣA-Za-z0-9_\s.,!?%&()'\"·…\-~:+/]*$")
 AXIS_FACT_KEY = {"rates": "TNX", "volatility": "VIX", "momentum": "NASDAQ"}
 
 try:
@@ -80,6 +87,9 @@ def fact_token(axis: str, snapshot: dict) -> str | None:
     return None
 
 
+_FORM_KR = {"rates": "", "volatility": "혼돈의 ", "momentum": "과열된 "}
+
+
 def template_line(role: str, index: int, decision: dict, snapshot: dict) -> str:
     """토큰 포함 원문(대입 전). index=0 이면 지표 사실 토큰을 넣는다."""
     v = villain_kr(decision["villain"])
@@ -87,7 +97,9 @@ def template_line(role: str, index: int, decision: dict, snapshot: dict) -> str:
     payoff = _PAYOFF.get(decision.get("omen_payoff") or "", "")
     token = fact_token(axis, snapshot) if index == 0 else None
     if role == "ESTABLISH_THREAT":
-        line = f"{token}, {v} 등장" if token else f"{_subj(v)} 도시를 덮쳤다"
+        # R4-06 관찰: 게이트 대체(다른 축)면 축의 공격 형태를 함께 밝혀 지표와 빌런을 맞춘다
+        form = _FORM_KR.get(axis, "")
+        line = f"{token}, {form}{v} 등장" if token else f"{_subj(form + v)} 도시를 덮쳤다"
         return payoff + line
     if role == "AFTERMATH_CALM":
         return f"{token}, 시장이 숨을 고른다" if token else "폭풍이 지나고 시장이 숨을 고른다"
@@ -224,6 +236,8 @@ def check_beat(item: dict | None, snapshot: dict) -> tuple[str | None, str | Non
         return "narration_too_long", None
     if FORBIDDEN.search(resolved):
         return "forbidden_phrase", None
+    if not ALLOWED_CHARS.match(resolved):
+        return "unsupported_char", None
     if len(sit.split()) > MAX_SITUATION_WORDS:
         return "situation_too_long", None
     if re.search(r"\d", sit):
@@ -260,7 +274,14 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
             logger.warning("script_violation attempt=1 cuts=%s", sorted(bad))
             repair = prompt + "\n[위반 수정 요청] " + "; ".join(f"cut {c}: {r}" for c, r in sorted(bad.items())) \
                 + " — 규칙을 지켜 전체 배열을 다시 출력하라."
-            results = _evaluate(_call(client, repair), plan, snapshot)
+            try:
+                second = _evaluate(_call(client, repair), plan, snapshot)
+            except Exception as e:  # noqa: BLE001 — 2차 실패는 1차 유효 비트 유지
+                logger.warning("script_repair_failed err=%s", type(e).__name__)
+                second = {}
+            # R6-05 #12: 비트 단위 병합 — 2차 유효 > 1차 유효 > 템플릿
+            results = {c: (second[c] if c in second and not second[c][1] else first)
+                       for c, first in results.items()}
     except Exception as e:  # noqa: BLE001 — 네트워크 등 전부 template 강등
         logger.warning("script_gemini_failed err=%s → template", type(e).__name__)
         return _template_script(plan, decision, snapshot, canon)

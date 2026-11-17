@@ -264,7 +264,14 @@ def test_publish_main_passes_narration_and_captions(monkeypatch, tmp_path):
     assert seen["market_snapshot"] == PLAN["market_snapshot"]
 
 
-@pytest.mark.parametrize("script,narration", [(False, False), (True, False), (False, True)])
+@pytest.mark.parametrize("script,narration", [(False, False), (False, True)])
 def test_publish_main_legacy_compose(monkeypatch, tmp_path, script, narration):
     seen = _publish_main_env(monkeypatch, tmp_path, script=script, narration=narration)
     assert seen == {}
+
+
+def test_publish_main_script_without_narration_blocked(monkeypatch, tmp_path):
+    """R6-05 #7 — 대본이 있는데 내레이션이 없으면 무내레이션 발행 차단."""
+    from src.cast.publish import PublishBlocked
+    with pytest.raises(PublishBlocked, match="무내레이션"):
+        _publish_main_env(monkeypatch, tmp_path, script=True, narration=False)

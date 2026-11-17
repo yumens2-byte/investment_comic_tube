@@ -38,7 +38,7 @@ def test_plan_mode_standard_expression(t3):
         "|| vars.CAST_EXECUTION_MODE || 'dry_run' }}")
     assert t3["jobs"]["plan"]["outputs"]["mode"]
     run = next(s for s in t3["jobs"]["plan"]["steps"] if "계층 판정" in (s.get("name") or ""))["run"]
-    assert "resolve_mode" in run and "GITHUB_OUTPUT" in run and "run_date_kst" in run
+    assert "python -m src.cast.__main__plan" in run   # 모드 정규화·GITHUB_OUTPUT은 모듈(test_plan_main)
 
 
 def test_downstream_jobs_use_plan_mode(t3):
@@ -101,20 +101,12 @@ def test_watchdog(wd):
 # ---------- DN2026_0115 P2 스토리 레이어 ----------
 
 def test_plan_story_env_and_flow(t3):
-    env = _step_env(t3["jobs"]["plan"], "계층 판정")
-    assert env["GEMINI_API_KEY"] == "${{ secrets.GEMINI_API_KEY }}"
-    assert env["SUPABASE_URL"] == "${{ secrets.SUPABASE_URL }}"
-    assert env["SUPABASE_SERVICE_ROLE_KEY"] == "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}"
-    run = next(s for s in t3["jobs"]["plan"]["steps"] if "계층 판정" in (s.get("name") or ""))["run"]
-    order = ["fetch_market_data()", "fetch_last_story(", "storyline.decide(", "cast_for_tier(tier, villain=",
-             "storyline.apply_focus(", "build_script(", "storyline.next_state("]
-    pos = [run.index(k) for k in order]
-    assert pos == sorted(pos)
-    assert 'if mode in ("shadow", "live") else None' in run
-    for k in ('"axis"', '"villain_scores"', '"villain_raw"', '"omen_villain"', '"omen_axis"',
-              '"hero_focus"', '"script"', '"story_state_next"', "[CAST] story villain="):
-        assert k in run
-
+    """DN2026_0115 — plan은 모듈(src.cast.__main__plan)로 실행, 스토리 env 주입."""
+    step = next(s for s in t3["jobs"]["plan"]["steps"] if "계층 판정" in (s.get("name") or ""))
+    env = step["env"]
+    for k in ("GEMINI_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CAST_TIER_FORCE"):
+        assert k in env
+    assert "python -m src.cast.__main__plan" in step["run"]
 
 def test_generate_tts_env(t3):
     gen = _step_env(t3["jobs"]["generate"], "fal i2v")

@@ -57,7 +57,8 @@ def main() -> None:
                            captions=captions, market_snapshot=plan_doc.get("market_snapshot"))
     else:
         if beats and not narration:
-            logger.warning("[CAST] script 있으나 generate_ledger narration 없음 — 무내레이션 합성")
+            # R6-05 #7: 대본이 있는데 내레이션이 없으면 무내레이션 발행 금지(부분 생성물 차단과 동일 원칙)
+            raise PublishBlocked("script 있으나 generate_ledger narration 없음 — 무내레이션 발행 차단")
         composed = compose(cuts, plan_doc.get("villain"), OUT_PATH)
 
     def _write(result: dict) -> None:

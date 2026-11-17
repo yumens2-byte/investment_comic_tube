@@ -106,13 +106,13 @@ def test_compose_with_narration_segments(tmp_path, no_bgm):
     out = tmp_path / "o" / "narr.mp4"
     res = compose(cuts, "Debt Titan", str(out), work_dir=str(tmp_path / "w"), narration=narration)
     # target = min(6, max(5, sec/tempo + 0.6)): 2.0→5.0, 4.0→5.0, 6.2(tempo 1.0877)→min(6, 6.3)=6.0
-    assert [s["target_sec"] for s in res["segments"]] == [5.0, 5.0, 6.0]
+    assert [s["target_sec"] for s in res["segments"]] == [5.333, 5.333, 6.0]   # R6-05 #3: 3컷 최소 16/3초
     assert res["segments"][0]["tempo"] == 1.0 and abs(res["segments"][2]["tempo"] - 6.2 / 5.7) < 1e-3
     info = _probe(str(out))
     video = next(s for s in info["streams"] if s["codec_type"] == "video")
     assert (video["width"], video["height"]) == (1080, 1920)
     assert any(s["codec_type"] == "audio" for s in info["streams"])
-    assert 15.0 <= res["duration_sec"] <= 60.0 and abs(res["duration_sec"] - 16.0) < 0.3
+    assert 15.0 <= res["duration_sec"] <= 60.0 and abs(res["duration_sec"] - 16.667) < 0.3
     # 내레이션은 컷 시작 오프셋에 배치 — 컷2(5.0~7.0s)는 소리, 컷1 끝(3.0~4.5s)은 무음(BGM 없음)
     assert _mean_volume(str(out), 5.3, 1.5) > _mean_volume(str(out), 2.5, 2.0) + 20
 

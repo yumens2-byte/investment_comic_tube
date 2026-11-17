@@ -71,59 +71,7 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast
-          python - <<'PY'
-          # DN2026_0114 — 모드 정규화·run 메타 기록
-          import json, logging, os
-          from datetime import datetime, timedelta, timezone
-          from src.cast import VERSION, classify_tier, cast_for_tier
-          from src.cast.mode import resolve_mode
-          logging.basicConfig(level=logging.INFO)
-          log = logging.getLogger("cast.plan")
-          mode = resolve_mode(os.environ.get("CAST_EXECUTION_MODE"))
-          log.info("[CAST] v%s 시작 stage=plan mode=%s", VERSION, mode)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"mode={mode}\n")
-          from src.collector import fetch_market_data
-          data = fetch_market_data()
-          tier = (os.environ.get("CAST_TIER_FORCE") or "auto").strip()
-          if tier not in ("T1", "T2", "T3"):
-              tier = classify_tier(data)
-          # DN2026_0115 P2 — 스토리 레이어: 직전 회차(fail-closed) → 빌런·축·복선 → 캐스팅 → 대본
-          from src.cast import ledger, storyline
-          from src.cast.script import build_script
-          prev = (ledger.fetch_last_story(include_generated=(mode == "shadow"), exclude_run_id=os.environ.get("GITHUB_RUN_ID"))
-                  if mode in ("shadow", "live") else None)   # DB 오류 시 plan 실패(fail-closed)
-          decision = storyline.decide(data, prev)
-          plan = cast_for_tier(tier, villain=decision["villain"])
-          plan = storyline.apply_focus(plan, decision["hero_focus"])
-          script = build_script(tier, plan, data, decision, prev, mode)
-          story_state_next = storyline.next_state(decision, script)
-          log.info("[CAST] story villain=%s raw=%s axis=%s omen=%s focus=%s season=S%dW%d source=%s",
-                   decision["villain"], decision["villain_raw"], decision["axis"],
-                   decision["omen_villain"], decision["hero_focus"],
-                   decision["season_no"], decision["season_week"], script["source"])
-          out = {
-              "tier": tier,
-              "plan": plan,
-              "mode": mode,
-              "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
-              "run_date_kst": datetime.now(timezone(timedelta(hours=9))).date().isoformat(),
-              "villain": decision["villain"],
-              "market_snapshot": json.loads(json.dumps(data, default=str)),
-              "axis": decision["axis"],
-              "villain_scores": decision["villain_scores"],
-              "villain_raw": decision["villain_raw"],
-              "omen_villain": decision["omen_villain"],
-              "omen_axis": decision["omen_axis"],
-              "hero_focus": decision["hero_focus"],
-              "script": script,
-              "story_state_next": story_state_next,
-          }
-          with open("artifacts_cast/cast_plan.json", "w") as f:
-              json.dump(out, f, ensure_ascii=False, indent=1, default=str)
-          print(json.dumps({k: v for k, v in out.items() if k != "market_snapshot"},
-                           ensure_ascii=False, indent=1)[:2000])
-          PY
+          python -m src.cast.__main__plan   # DN2026_0115: heredoc → 모듈(테스트 가능)
       - name: Upload cast plan
         if: always()
         uses: actions/upload-artifact@v5

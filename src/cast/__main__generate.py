@@ -114,10 +114,14 @@ def _script_beats(plan_doc: dict, plan: list[dict]) -> list[dict] | None:
     return beats
 
 
-def _cut_prompt(cut: dict, beat: dict | None, canon: dict | None, axis: str | None) -> str:
-    """DN2026_0115 — 대본 있으면 v2(캐논+공격형태+situation_en), 없으면 기존 상황값."""
+def _cut_prompt(cut: dict, beat: dict | None, canon: dict | None, axis: str | None,
+                omen_axis: str | None = None) -> str:
+    """DN2026_0115 — 대본 있으면 v2(캐논+공격형태+situation_en), 없으면 기존 상황값.
+    NEXT_OMEN 컷은 다음 주 예고 축(omen_axis)의 공격 형태를 쓴다(R6-05 #14)."""
     if beat is None:
         return generate.build_cut_prompt(CANON_PROMPT, cut["role"])
+    if cut.get("role") == "NEXT_OMEN" and omen_axis:
+        axis = omen_axis
     return generate.build_cut_prompt_v2(cut["characters"], beat["situation_en"], canon or {}, axis)
 
 
@@ -164,7 +168,7 @@ def main() -> None:
                 state["narration_plan"] = cast_narration.plan_only(beats)
             for cut in plan:
                 request = generate.build_fal_request(
-                    _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis),
+                    _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis, plan_doc.get("omen_axis")),
                     _image_url_for(cut, refs), cut_sec)
                 state["results"].append({"cut": cut["cut"], "mode": "dry_run",
                                          "request_keys": sorted(request),
@@ -195,7 +199,8 @@ def main() -> None:
             raise generate.GenerationError(
                 f"cost_cap_run prior=${prior:.2f} planned=${planned:.2f} cap=${run_cap:.2f}")
         # DN2026_0115: 내레이션 TTS — open_run 이후·첫 fal 제출 전. 실패 시 fal 0회로 종료.
-        # TTS 비용은 fal cost 가드 대상 아님.
+        # TTS 비용은 fal cost 가드 대상 아님(OPEX 별도 등록).
+        start = time.time()   # R6-05 #5: TTS 소요도 생성 시간 예산에 포함
         if beats:
             try:
                 state["narration"] = cast_narration.synthesize(
@@ -216,10 +221,9 @@ def main() -> None:
             state["total_cost_usd"] = round(state["total_cost_usd"] + per_cut, 2)
             _write_ledger(state)
 
-        start = time.time()
         for idx, cut in enumerate(plan):
             request = generate.build_fal_request(
-                _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis),   # DN2026_0115
+                _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis, plan_doc.get("omen_axis")),   # DN2026_0115
                 _image_url_for(cut, refs), cut_sec)
             now = time.time()
             remaining = start + budget - now

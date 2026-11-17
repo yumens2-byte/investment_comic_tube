@@ -67,7 +67,8 @@ def test_season_boundary_and_prev_state_shape(fake_select):
     d = S.decide({}, prev)
     assert (d["season_no"], d["season_week"]) == (2, 1)
     assert d["villain_streak"] == 3
-    assert calls[-1] == {"villain": DT, "story_state": prev["story_state"]}
+    # R6-05 #1: select_villain에는 raw 이름 + streak만 전달
+    assert calls[-1] == {"villain": DT, "story_state": {"villain_streak": 2}}
     assert d["ending_type"] == "DECLARE"   # src.story.select_ending_type 순환
 
 
@@ -119,3 +120,35 @@ def test_next_state_fields(fake_select):
     assert set(st) == {"villain", "villain_raw", "axis", "villain_streak", "season_no", "season_week",
                        "omen_villain", "omen_axis", "ending_type", "hero_focus", "unresolved"}
     assert st["unresolved"] == "끝" and st["villain"] == DT and st["villain_raw"] == CR
+
+
+
+def test_gated_prev_rotation_uses_raw():
+    """R6-05 #1·#2 — 원장 villain은 게이트 후 이름(Debt Titan)이어도 회전·스트릭은 raw 기준.
+    실제 select_villain으로 모멘텀이 계속 1위인 주를 연쇄 시뮬레이션한다."""
+    data = {"TNX": {"close": 4.0, "change_pct": 0.0, "dev_pct": 0.0}, "DXY": {"close": 100, "change_pct": 0.0, "dev_pct": 0.0},
+            "VIX": {"close": 14.0, "change_pct": -1.0, "dev_pct": -5.0},
+            "SPX": {"close": 7000, "change_pct": 2.5, "dev_pct": 4.0},
+            "NASDAQ": {"close": 25000, "change_pct": 3.0, "dev_pct": 5.0}}
+    prev, raws, streaks = None, [], []
+    for week in range(6):
+        d = S.decide(data, prev)
+        raws.append(d["villain_raw"]); streaks.append(d["villain_streak"])
+        assert d["villain"] == "Debt Titan"          # 캐논 게이트
+        prev = {"run_id": str(week), "villain": d["villain"],
+                "story_state": {**S.next_state(d, {"beats": [{"narration": "x"}]})}}
+    assert raws[:3] == [BB, BB, BB]
+    assert raws[3] != BB                              # 3연속 후 강제 회전(raw 기준)
+    assert max(streaks) <= 3                          # 스트릭 무한 증가 없음
+
+
+def test_same_iso_week_rerun_does_not_advance():
+    """R6-05 #15 — 같은 ISO 주 재실행은 주차·스트릭을 올리지 않는다."""
+    data = {"TNX": {"close": 5.0, "change_pct": 3.0, "dev_pct": 6.0}}
+    d1 = S.decide(data, None, run_date_kst="2026-11-21")
+    prev = {"run_id": "a", "run_date_kst": "2026-11-21", "villain": d1["villain"],
+            "story_state": S.next_state(d1, {"beats": [{"narration": "x"}]})}
+    d2 = S.decide(data, prev, run_date_kst="2026-11-21")
+    assert (d2["season_week"], d2["villain_streak"]) == (d1["season_week"], d1["villain_streak"])
+    d3 = S.decide(data, prev, run_date_kst="2026-11-28")
+    assert d3["season_week"] == d1["season_week"] + 1

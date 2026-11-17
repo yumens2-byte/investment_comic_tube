@@ -30,6 +30,7 @@ PROBE_TIMEOUT_SEC = 30
 # DN2026_0115 내레이션 믹스 규격
 NARR_MIN_CUT_SEC = 5.0       # 내레이션 있을 때 컷 최소 길이
 NARR_TAIL_SEC = 0.6          # 내레이션 끝 이후 여유
+MIN_TOTAL_WITH_MARGIN = 16.0  # R6-05 #3: 합성 하한(15초)보다 1초 여유
 BGM_UNDER_NARR_VOLUME = 0.15
 VIDEO_FILTER = (
     f"scale={TARGET_W}:{TARGET_H}:force_original_aspect_ratio=increase,"
@@ -106,7 +107,11 @@ def _narration_plan(ordered: list[dict], narration: list[dict], clip_durs: list[
         sec = float(n.get("sec") or 0.0)
         if tempo <= 0 or sec <= 0:
             raise ComposeError(f"내레이션 길이·tempo 이상 cut={cut['cut']}")
-        target = min(clip_dur, max(NARR_MIN_CUT_SEC, sec / tempo + NARR_TAIL_SEC))
+        # R6-05 #3: 컷 수가 적으면(T1 3컷) 합계가 15초 경계에 걸리지 않게 최소 길이를 올린다
+        min_cut = max(NARR_MIN_CUT_SEC, MIN_TOTAL_WITH_MARGIN / max(1, len(ordered)))
+        target = min(clip_dur, max(min_cut, sec / tempo + NARR_TAIL_SEC))
+        if sec / tempo > target - 0.05:   # R6-05 #4: 클립이 내레이션보다 짧으면 다음 비트와 겹침 → 차단
+            raise ComposeError(f"내레이션이 컷보다 김 cut={cut['cut']} narr={sec / tempo:.2f}s clip={clip_dur:.2f}s")
         plan.append({"cut": int(cut["cut"]), "target_sec": round(target, 3), "tempo": tempo, "wav": wav})
     return plan
 
