@@ -38,7 +38,7 @@ def test_plan_mode_standard_expression(t3):
         "|| vars.CAST_EXECUTION_MODE || 'dry_run' }}")
     assert t3["jobs"]["plan"]["outputs"]["mode"]
     run = next(s for s in t3["jobs"]["plan"]["steps"] if "계층 판정" in (s.get("name") or ""))["run"]
-    assert "resolve_mode" in run and "GITHUB_OUTPUT" in run and "run_date_kst" in run
+    assert "python -m src.cast.__main__plan" in run   # 모드 정규화·GITHUB_OUTPUT은 모듈(test_plan_main)
 
 
 def test_downstream_jobs_use_plan_mode(t3):
@@ -76,7 +76,7 @@ def test_report_job(t3):
 
 
 def test_every_job_has_timeout(t3):
-    expected = {"test": 10, "plan": 10, "generate": 50, "publish": 20, "report": 5}
+    expected = {"test": 10, "plan": 15, "generate": 50, "publish": 20, "report": 5}
     assert {k: j.get("timeout-minutes") for k, j in t3["jobs"].items()} == expected
 
 
@@ -96,3 +96,29 @@ def test_watchdog(wd):
     assert job["timeout-minutes"] == 5
     run = "\n".join(s.get("run", "") for s in job["steps"])
     assert "curl -fsS" in run and '"schedule"' in run and "점검일 아님" in run
+
+
+# ---------- DN2026_0115 P2 스토리 레이어 ----------
+
+def test_plan_story_env_and_flow(t3):
+    """DN2026_0115 — plan은 모듈(src.cast.__main__plan)로 실행, 스토리 env 주입."""
+    step = next(s for s in t3["jobs"]["plan"]["steps"] if "계층 판정" in (s.get("name") or ""))
+    env = step["env"]
+    for k in ("GEMINI_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "CAST_TIER_FORCE"):
+        assert k in env
+    assert "python -m src.cast.__main__plan" in step["run"]
+
+def test_generate_tts_env(t3):
+    gen = _step_env(t3["jobs"]["generate"], "fal i2v")
+    assert gen["GEMINI_API_KEY"] == "${{ secrets.GEMINI_API_KEY }}"
+    assert gen["CAST_TTS_MODEL"] == "${{ vars.CAST_TTS_MODEL || 'gemini-3.8-flash-tts' }}"
+    assert gen["TTS_VOICE"] == "${{ vars.CAST_TTS_VOICE || 'Charon' }}"
+
+
+def test_publish_caption_font_after_ffmpeg(t3):
+    steps = t3["jobs"]["publish"]["steps"]
+    runs = [s.get("run", "") for s in steps]
+    ff = next(i for i, r in enumerate(runs) if "apt-get install -y ffmpeg" in r)
+    font = next(i for i, r in enumerate(runs) if "install_caption_font.py" in r)
+    assert font == ff + 1 and runs[font].strip() == "sudo python3 scripts/install_caption_font.py"
+    assert _step_env(t3["jobs"]["publish"], "합성·발행")["CAPTION_LAYOUT_POLICY"] == "caption-layout-v1"

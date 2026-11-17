@@ -55,6 +55,56 @@ def build_cut_prompt(canon_prompt: str, role: str) -> str:
     return f"{canon_prompt} {situation}"
 
 
+PROMPT_MAX_CHARS = 2000   # DN2026_0115
+PROMPT_HEAD = "Comic-book cinematic vertical shot. "
+PROMPT_TAIL = " Single action, single camera move. No text, no numbers, no letters anywhere in frame."
+HERO_KEYS = ("EDT", "FG-01", "LEV-01")   # 캐논 _cast_video_canon.characters 히어로 키
+
+
+def _video_canon_chars(canon: dict) -> dict:
+    """canon_data 전체 또는 _cast_video_canon 블록 어느 쪽이 와도 characters 를 꺼낸다."""
+    block = canon.get("_cast_video_canon", canon) if isinstance(canon, dict) else {}
+    chars = block.get("characters") if isinstance(block, dict) else None
+    return chars if isinstance(chars, dict) else {}
+
+
+def build_cut_prompt_v2(characters: list[str], situation_en: str, canon: dict,
+                        axis: str | None) -> str:
+    """DN2026_0115 — 캐논 고정 블록(등장 캐릭터별 prompt_en) + 빌런 공격형태(axis) + 대본 상황값.
+
+    히어로 키 EDT/FG-01/LEV-01, 빌런은 이름 키. 캐논에 없는 캐릭터는 이름만 넣는다.
+    등장 캐릭터 negative_en 은 " Avoid: ..." 로 덧붙인다. 2000자 초과 시 GenerationError.
+    """
+    situation = (situation_en or "").strip()
+    if not situation:
+        raise GenerationError("situation_en 비어 있음 — 상황값 없이 생성 금지")
+    chars = _video_canon_chars(canon)
+    blocks: list[str] = []
+    negatives: list[str] = []
+    for name in characters or []:
+        entry = chars.get(name)
+        if not isinstance(entry, dict) or not entry.get("prompt_en"):
+            blocks.append(f"{name}.")
+            continue
+        text = entry["prompt_en"].strip()
+        attack = (entry.get("attack_forms_en") or {}).get(axis or "") if name not in HERO_KEYS else None
+        if attack:
+            text = f"{text.rstrip('.')}, {attack.strip().rstrip('.')}."
+        elif not text.endswith("."):
+            text += "."
+        blocks.append(text)
+        neg = (entry.get("negative_en") or "").strip().rstrip(".")
+        if neg:
+            negatives.append(neg)
+    prompt = PROMPT_HEAD + " ".join(blocks)
+    prompt = f"{prompt} {situation}{PROMPT_TAIL}" if blocks else f"{PROMPT_HEAD}{situation}{PROMPT_TAIL}"
+    if negatives:
+        prompt += " Strictly: " + "; ".join(negatives) + "."   # 캐논 negative_en이 이미 no …형
+    if len(prompt) > PROMPT_MAX_CHARS:
+        raise GenerationError(f"prompt_too_long chars={len(prompt)} max={PROMPT_MAX_CHARS}")
+    return prompt
+
+
 def build_fal_request(prompt: str, image_url: str | None, duration: int = 10) -> dict:
     """fal 요청 JSON — T3 실측 계약 그대로."""
     if not 5 <= duration <= 15:
@@ -148,7 +198,13 @@ def poll_cut(sub: dict, deadline_ts: float) -> str:
         status = st.get("status")
         if status == "COMPLETED":
             res = _get_json_transient(sub["response_url"], headers)
-            url = (res.get("video") or {}).get("url")
+            url = (res.get("video") or {}).get("url") if isinstance(res.get("video"), dict) else None
+            # DN2026_0115: fal queue 실패는 COMPLETED 결과의 error/detail 로 온다(공식 queue 문서).
+            # 응답 본문은 로그하지 않고 error_type 만 남긴다 → 재제출 1회 경로.
+            if not url and ("error" in res or "detail" in res):
+                etype = res.get("error_type")
+                etype = etype if isinstance(etype, str) and len(etype) <= 64 else "unknown"
+                raise _TerminalFailure(f"fal_failed type={etype}")
             if not url:
                 raise GenerationError("fal 완료 응답에 video.url 부재")
             return url

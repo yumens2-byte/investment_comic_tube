@@ -195,6 +195,8 @@ def run_env(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "add_cost", lambda rid, usd: calls["add"].append(usd) or sum(calls["add"]))
     monkeypatch.setattr(L, "mark", lambda rid, st, **f: calls["mark"].append((st, f)))
     monkeypatch.setattr(L, "month_spent_usd", lambda d: calls["month"].append(d) or 0.0)
+    calls["story"] = []   # DN2026_0115 통합: 실 ledger.record_story 존재 — 가짜로 대체
+    monkeypatch.setattr(L, "record_story", lambda *a: calls["story"].append(a), raising=False)
 
     def write(n=3, mode="shadow"):
         plan_file.write_text(json.dumps({"tier": "T3", "plan": _plan(n), "mode": mode,
@@ -377,3 +379,188 @@ def test_deadline_split_across_remaining_cuts(run_env, monkeypatch):
     monkeypatch.setattr(G, "generate_cut", fake)
     gen_main.main()
     assert seen == [600.0, 700.0, 900.0, 1500.0]       # (2400-경과)/남은컷
+
+
+# ── DN2026_0115 P2: build_cut_prompt_v2 · fal error 판정 · 대본 흐름 ─────────────────
+from src.cast import narration as NR
+from src.cast.casting import _load_canon
+
+
+def test_prompt_v2_villain_attack_negative_and_no_text():
+    canon = _load_canon()
+    p = G.build_cut_prompt_v2(["EDT", "FG-01", "Debt Titan"], "The hero dodges a falling chain.",
+                              canon, "rates")
+    assert p.startswith("Comic-book cinematic vertical shot. EDT, a towering tiger warrior")
+    assert "heavy chains of debt" in p                      # attack_forms_en[rates]
+    assert "The hero dodges a falling chain." in p
+    assert "No text, no numbers, no letters anywhere in frame." in p
+    neg = canon["_cast_video_canon"]["characters"]["FG-01"]["negative_en"].strip().rstrip(".")
+    assert p.endswith(f" Strictly: {neg}.")
+    assert len(p) <= G.PROMPT_MAX_CHARS
+
+
+def test_prompt_v2_unknown_character_name_only_and_no_axis():
+    p = G.build_cut_prompt_v2(["Chaos Reaper"], "Shadows swirl.", _load_canon(), None)
+    assert p == ("Comic-book cinematic vertical shot. Chaos Reaper. Shadows swirl."
+                 " Single action, single camera move. No text, no numbers, no letters anywhere in frame.")
+    p2 = G.build_cut_prompt_v2(["Debt Titan"], "x.", _load_canon(), None)
+    assert "chains" not in p2 and "Strictly" not in p2
+
+
+def test_prompt_v2_too_long_and_empty_situation():
+    with pytest.raises(G.GenerationError, match="prompt_too_long"):
+        G.build_cut_prompt_v2(["EDT"], "y" * 2000, _load_canon(), None)
+    with pytest.raises(G.GenerationError, match="situation_en"):
+        G.build_cut_prompt_v2(["EDT"], " ", _load_canon(), None)
+
+
+def test_completed_with_error_resubmits_once(fal, tmp_path, monkeypatch, caplog):
+    fal["statuses"] = [{"status": "COMPLETED"}, {"status": "COMPLETED"}]
+    results = [{"detail": "SECRET body", "error_type": "content_policy_violation"},
+               {"video": {"url": "https://v/x.mp4"}}]
+
+    def get_json(url, headers):
+        if url == "r":
+            return results.pop(0)
+        return fal["statuses"].pop(0)
+    monkeypatch.setattr(G, "_get_json", get_json)
+    r = G.generate_cut({}, str(tmp_path / "c.mp4"), cut_no=2, deadline_ts=fal["clock"].t + 600)
+    assert fal["submits"] == 2 and r["attempts"] == 2
+    assert "fal_failed type=content_policy_violation" in caplog.text and "SECRET" not in caplog.text
+
+
+def test_completed_with_error_twice_gives_up(fal, tmp_path, monkeypatch):
+    fal["statuses"] = [{"status": "COMPLETED"}, {"status": "COMPLETED"}]
+    monkeypatch.setattr(G, "_get_json", lambda url, h: {"error": "x"} if url == "r" else fal["statuses"].pop(0))
+    with pytest.raises(G.GenerationError, match="fal_failed type=unknown"):
+        G.generate_cut({}, str(tmp_path / "c.mp4"), cut_no=1, deadline_ts=fal["clock"].t + 600)
+    assert fal["submits"] == 2
+
+
+def _script(n=3):
+    roles = ["ESTABLISH_THREAT", "CRISIS", "RESOLVE"]
+    return {"version": 1, "source": "test", "ending_type": "x",
+            "beats": [{"cut": i + 1, "role": roles[i % 3], "narration": f"내레이션 {i + 1}",
+                       "situation_en": f"Situation {i + 1}."} for i in range(n)]}
+
+
+@pytest.fixture
+def script_env(run_env, tmp_path):
+    def write(n=3, mode="shadow", script=True):
+        run_env["write"](n, mode)
+        doc = json.loads((tmp_path / "artifacts_cast" / "cast_plan.json").read_text())
+        doc.update({"villain": "Debt Titan", "axis": "volatility", "story_state_next": {"ep": 2}})
+        if script:
+            doc["script"] = _script(n)
+        (tmp_path / "artifacts_cast" / "cast_plan.json").write_text(json.dumps(doc, ensure_ascii=False))
+    run_env["write_script"] = write
+    return run_env
+
+
+def test_script_shadow_flow_tts_then_v2_prompts(script_env, monkeypatch):
+    script_env["write_script"](3, "shadow")
+    order, prompts, stories = [], [], []
+    monkeypatch.setattr(L, "record_story", lambda *a: stories.append(a) or order.append("story"),
+                        raising=False)
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: order.append(("tts", k["budget_sec"]))
+                        or [{"cut": b["cut"], "wav": f"{out}/n{b['cut']}.wav", "sec": 3.0, "tempo": 1.0}
+                            for b in beats])
+    submits = []
+    fake = _fake_cut(submits)
+
+    def cut(request, out, **k):
+        order.append("fal")
+        prompts.append(request["prompt"])
+        return fake(request, out, **k)
+    monkeypatch.setattr(G, "generate_cut", cut)
+    gen_main.main()
+    assert order[:2] == ["story", ("tts", 6)] and order[2:] == ["fal"] * 3
+    assert stories[0] == ("777", "Debt Titan", {"ep": 2}, _script(3))
+    assert all(p.startswith("Comic-book cinematic vertical shot.") for p in prompts)
+    assert "flickering chaotic shadows" in prompts[0] and "Situation 2." in prompts[1]
+    led = script_env["ledger"]()
+    assert [n["cut"] for n in led["narration"]] == [1, 2, 3] and led["story_recorded"] is True
+
+
+def test_script_tts_failure_no_fal_and_gen_failed(script_env, monkeypatch):
+    script_env["write_script"](3, "live")
+
+    def boom(*a, **k):
+        raise NR.NarrationError("tts_failed reason=tts:quota_exhausted ok=0/3")
+    monkeypatch.setattr(NR, "synthesize", boom)
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    with pytest.raises(G.GenerationError, match="narration_failed"):
+        gen_main.main()
+    assert script_env["add"] == []
+    assert script_env["mark"][-1] == ("gen_failed", {"error": "GenerationError:narration_failed"})
+    assert script_env["ledger"]()["error"] == "GenerationError:narration_failed"
+
+
+def test_script_dry_run_no_tts(script_env, monkeypatch):
+    script_env["write_script"](3, "dry_run")
+    monkeypatch.setattr(NR, "synthesize", lambda *a, **k: (_ for _ in ()).throw(AssertionError("TTS 호출")))
+    monkeypatch.setattr(L, "record_story", lambda *a: (_ for _ in ()).throw(AssertionError("DB")),
+                        raising=False)
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    gen_main.main()
+    led = script_env["ledger"]()
+    assert "narration" not in led
+    assert led["narration_plan"][0] == {"cut": 1, "role": "ESTABLISH_THREAT", "text": "내레이션 1", "chars": 6}
+    assert all(r["prompt_chars"] > 100 for r in led["results"])
+
+
+def test_script_without_record_story_still_runs(script_env, monkeypatch):
+    script_env["write_script"](3, "shadow")
+    monkeypatch.delattr(L, "record_story", raising=False)
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": "w", "sec": 3.0, "tempo": 1.0} for b in beats])
+    submits = []
+    monkeypatch.setattr(G, "generate_cut", _fake_cut(submits))
+    gen_main.main()
+    assert submits == [1, 2, 3] and "story_recorded" not in script_env["ledger"]()
+
+
+def test_script_mismatch_blocks_before_spend(script_env, monkeypatch, tmp_path):
+    script_env["write_script"](3, "shadow")
+    f = tmp_path / "artifacts_cast" / "cast_plan.json"
+    doc = json.loads(f.read_text())
+    doc["script"]["beats"] = doc["script"]["beats"][:2]
+    f.write_text(json.dumps(doc))
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    with pytest.raises(G.GenerationError, match="script_mismatch"):
+        gen_main.main()
+    assert script_env["open"] == [] and script_env["add"] == []
+
+
+def test_no_script_keeps_legacy_prompt(script_env, monkeypatch):
+    script_env["write_script"](3, "shadow", script=False)
+    monkeypatch.setattr(NR, "synthesize", lambda *a, **k: (_ for _ in ()).throw(AssertionError("TTS")))
+    prompts = []
+    fake = _fake_cut([])
+    monkeypatch.setattr(G, "generate_cut", lambda req, out, **k: prompts.append(req["prompt"]) or fake(req, out, **k))
+    gen_main.main()
+    assert all(p.startswith(gen_main.CANON_PROMPT) for p in prompts)
+    assert "narration" not in script_env["ledger"]()
+
+
+def test_narration_requires_cut_sec_6(script_env, monkeypatch):
+    """R6-06 D3 — 내레이션 회차에서 CAST_CUT_SEC=5는 과금 전 차단(T1 합계 15초 경계)."""
+    script_env["write_script"](3, "live")
+    monkeypatch.setenv("CAST_CUT_SEC", "5")
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    with pytest.raises(G.GenerationError, match="cut_sec_too_short_for_narration"):
+        gen_main.main()
+    assert script_env["add"] == [] and script_env["open"] == []
+    assert script_env["ledger"]()["error"] == "GenerationError:cut_sec_too_short_for_narration"
+
+
+def test_next_omen_prompt_uses_omen_axis():
+    """R6-05 #14 — NEXT_OMEN 컷은 다음 주 예고 축의 공격 형태를 쓴다."""
+    canon = _load_canon()["_cast_video_canon"]
+    forms = canon["characters"]["Debt Titan"]["attack_forms_en"]
+    cut = {"cut": 7, "role": "NEXT_OMEN", "characters": ["EDT", "Debt Titan"]}
+    beat = {"situation_en": "A shadow looms on the horizon."}
+    p = gen_main._cut_prompt(cut, beat, canon, "volatility", "rates")
+    assert forms["rates"] in p and forms["volatility"] not in p
+    other = {"cut": 4, "role": "CRISIS", "characters": ["Debt Titan", "FG-01"]}
+    assert forms["volatility"] in gen_main._cut_prompt(other, beat, canon, "volatility", "rates")

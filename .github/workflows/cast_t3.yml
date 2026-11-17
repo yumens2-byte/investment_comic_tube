@@ -48,7 +48,7 @@ jobs:
   plan:
     needs: test
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15   # DN2026_0115 P2 — Gemini 대본(재호출 1회 포함)·원장 조회 여유
     outputs:
       mode: ${{ steps.plan.outputs.mode }}   # DN2026_0114 정규화 모드
     steps:
@@ -62,43 +62,16 @@ jobs:
           FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
           ALPHAVANTAGE_API_KEY: ${{ secrets.ALPHAVANTAGE_API_KEY }}
           FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+          # DN2026_0115 P2 — 대본(Gemini, dry_run 미호출)·직전 회차 연속성(cast_runs, shadow/live만)
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           CAST_EXECUTION_MODE: ${{ (github.event_name == 'workflow_dispatch' && inputs.mode) || vars.CAST_EXECUTION_MODE || 'dry_run' }}  # DN2026_0114
           CAST_TIER_FORCE: ${{ inputs.tier_force || 'auto' }}
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast
-          python - <<'PY'
-          # DN2026_0114 — 모드 정규화·run 메타 기록
-          import json, logging, os
-          from datetime import datetime, timedelta, timezone
-          from src.cast import VERSION, classify_tier, cast_for_tier
-          from src.cast.mode import resolve_mode
-          logging.basicConfig(level=logging.INFO)
-          log = logging.getLogger("cast.plan")
-          mode = resolve_mode(os.environ.get("CAST_EXECUTION_MODE"))
-          log.info("[CAST] v%s 시작 stage=plan mode=%s", VERSION, mode)
-          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
-              f.write(f"mode={mode}\n")
-          from src.collector import fetch_market_data
-          data = fetch_market_data()
-          tier = (os.environ.get("CAST_TIER_FORCE") or "auto").strip()
-          if tier not in ("T1", "T2", "T3"):
-              tier = classify_tier(data)
-          plan = cast_for_tier(tier)
-          out = {
-              "tier": tier,
-              "plan": plan,
-              "mode": mode,
-              "run_id": os.environ.get("GITHUB_RUN_ID", "local"),
-              "run_date_kst": datetime.now(timezone(timedelta(hours=9))).date().isoformat(),
-              "villain": "Debt Titan",
-              "market_snapshot": json.loads(json.dumps(data, default=str)),
-          }
-          with open("artifacts_cast/cast_plan.json", "w") as f:
-              json.dump(out, f, ensure_ascii=False, indent=1, default=str)
-          print(json.dumps({k: v for k, v in out.items() if k != "market_snapshot"},
-                           ensure_ascii=False, indent=1)[:2000])
-          PY
+          python -m src.cast.__main__plan   # DN2026_0115: heredoc → 모듈(테스트 가능)
       - name: Upload cast plan
         if: always()
         uses: actions/upload-artifact@v5
@@ -137,6 +110,10 @@ jobs:
           CAST_MONTH_CAP_USD: ${{ vars.CAST_MONTH_CAP_USD || '30' }}
           CAST_CUT_SEC: ${{ vars.CAST_CUT_SEC || '6' }}
           CAST_GEN_BUDGET_SEC: '2400'
+          # DN2026_0115 P2 — 비트별 내레이션 TTS
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          CAST_TTS_MODEL: ${{ vars.CAST_TTS_MODEL || 'gemini-3.8-flash-tts' }}
+          TTS_VOICE: ${{ vars.CAST_TTS_VOICE || 'Charon' }}
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast
@@ -174,6 +151,8 @@ jobs:
         run: |
           sudo apt-get update && sudo apt-get install -y ffmpeg
           ffprobe -version | head -1
+      - name: 자막 폰트 설치 (Noto CJK SHA-256 검증, DN2026_0115 P2)
+        run: sudo python3 scripts/install_caption_font.py
       - run: pip install -r requirements.txt
       - uses: actions/download-artifact@v5
         with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
@@ -191,6 +170,7 @@ jobs:
           YOUTUBE_PLAYLIST_TITLE: ${{ vars.CAST_PLAYLIST_TITLE || 'EDT_UNIVERSE_CAST' }}
           CAST_YOUTUBE_PRIVACY: ${{ vars.CAST_YOUTUBE_PRIVACY || 'private' }}
           PIPELINE_CHANNEL_KEY: ${{ vars.PIPELINE_CHANNEL_KEY_CAST || 'EDT_UNIVERSE_CAST' }}
+          CAPTION_LAYOUT_POLICY: caption-layout-v1   # DN2026_0115 P2 — 내레이션 자막 레이아웃
         run: |
           export PYTHONPATH=$(pwd)
           python -m src.cast.__main__publish

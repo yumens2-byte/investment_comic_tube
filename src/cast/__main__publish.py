@@ -47,7 +47,19 @@ def main() -> None:
     if planned == 0 or len(cuts) != planned:
         raise PublishBlocked(f"컷 수 불일치 planned={planned} existing={len(cuts)} — 부분 생성물 발행 금지")
 
-    composed = compose(cuts, plan_doc.get("villain"), OUT_PATH)
+    # DN2026_0115: 대본·내레이션 있으면 내레이션 믹스 + 자막(컷 번호 오름차순 = compose 정렬 순서)
+    script = plan_doc.get("script")
+    beats = (script or {}).get("beats") if isinstance(script, dict) else None
+    narration = gen_ledger.get("narration")
+    if beats and narration:
+        captions = [b["narration"] for b in sorted(beats, key=lambda b: int(b["cut"]))]
+        composed = compose(cuts, plan_doc.get("villain"), OUT_PATH, narration=narration,
+                           captions=captions, market_snapshot=plan_doc.get("market_snapshot"))
+    else:
+        if beats and not narration:
+            # R6-05 #7: 대본이 있는데 내레이션이 없으면 무내레이션 발행 금지(부분 생성물 차단과 동일 원칙)
+            raise PublishBlocked("script 있으나 generate_ledger narration 없음 — 무내레이션 발행 차단")
+        composed = compose(cuts, plan_doc.get("villain"), OUT_PATH)
 
     def _write(result: dict) -> None:
         with open(RESULT_PATH, "w", encoding="utf-8") as f:
@@ -55,7 +67,7 @@ def main() -> None:
 
     base = {"version": VERSION, "mode": mode, "run_id": plan_doc.get("run_id"),
             "video_path": composed["path"], "duration_sec": composed["duration_sec"],
-            "thumbnail": composed["thumbnail"]}
+            "thumbnail": composed["thumbnail"], "segments": composed.get("segments")}  # DN2026_0115
     # DN2026_0114 (R6-02 #4): 업로드 직후·원장 mark 전에 video_id를 먼저 기록(mark 실패 시 대사 근거)
     video_id = publish_cast(composed["path"], plan_doc, mode, composed["thumbnail"],
                             on_uploaded=lambda vid: _write({**base, "status": "uploaded_unmarked",
@@ -64,7 +76,7 @@ def main() -> None:
     result = {
         "version": VERSION, "mode": mode, "run_id": plan_doc.get("run_id"),
         "video_path": composed["path"], "duration_sec": composed["duration_sec"],
-        "thumbnail": composed["thumbnail"],
+        "thumbnail": composed["thumbnail"], "segments": composed.get("segments"),  # DN2026_0115
         "status": "published" if video_id else "skipped",
         "youtube_video_id": video_id,
     }
