@@ -53,3 +53,17 @@ def test_send_report_swallows_http_error(monkeypatch):
 
     monkeypatch.setattr(rep.urllib.request, "urlopen", fake_urlopen)
     assert rep.send_report("x") is False
+
+
+def test_send_report_swallows_any_network_error(monkeypatch):
+    """부록 Z — URLError·timeout 등 HTTPError 외 예외도 파이프라인을 막지 않는다."""
+    import urllib.error as ue
+
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "tok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "chat")
+    monkeypatch.setattr(rep.urllib.request, "urlopen",
+                        lambda req, timeout=30: (_ for _ in ()).throw(ue.URLError("dns fail")))
+    assert rep.send_report("x") is False
+    monkeypatch.setattr(rep.urllib.request, "urlopen",
+                        lambda req, timeout=30: (_ for _ in ()).throw(TimeoutError("timed out")))
+    assert rep.send_report("x") is False

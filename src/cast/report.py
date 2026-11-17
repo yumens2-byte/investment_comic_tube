@@ -31,8 +31,11 @@ def send_report(text: str) -> bool:
     try:
         with urllib.request.urlopen(req, timeout=30) as r:
             ok = r.status == 200
-    except urllib.error.HTTPError as e:   # 토큰 만료·chat_id 오류 등 — 리포트 유실이 파이프라인을 막지 않는다
+    except urllib.error.HTTPError as e:   # 토큰 만료·chat_id 오류(404/401 등)
         logger.warning("report_send_failed status=%d reason=%s", e.code, e.reason)
+        return False
+    except Exception as e:                # URLError·timeout·SSL 등 나머지 전부 — 원칙 완수(부록 Z)
+        logger.warning("report_send_failed err=%s msg=%s", type(e).__name__, e)
         return False
     logger.info("report_sent ok=%s", ok)
     return ok
