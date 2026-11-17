@@ -54,16 +54,20 @@ def build_text(run_conclusion: str, tier: str | None, total_cost: float | None,
 
 
 def main() -> None:
-    conclusion = os.environ.get("CAST_RUN_CONCLUSION", "unknown")
-    tier = os.environ.get("CAST_RUN_TIER")
-    cost = os.environ.get("CAST_RUN_COST")
-    cuts = os.environ.get("CAST_RUN_CUTS")
-    text = build_text(
-        conclusion, tier,
-        float(cost) if cost else None,
-        int(cuts) if cuts else None,
-    )
-    send_report(text)
+    # 리포트는 파이프라인 결론을 바꿀 수 없다 — 어떤 예외도 스텝 실패로 전파하지 않는다(부록 Z-2).
+    try:
+        conclusion = os.environ.get("CAST_RUN_CONCLUSION", "unknown")
+        tier = os.environ.get("CAST_RUN_TIER")
+        cost = os.environ.get("CAST_RUN_COST")
+        cuts = os.environ.get("CAST_RUN_CUTS")
+        text = build_text(
+            conclusion, tier,
+            float(cost) if cost else None,
+            int(cuts) if cuts else None,
+        )
+        send_report(text)
+    except Exception as e:
+        logger.warning("report_main_failed err=%s msg=%s", type(e).__name__, e)
 
 
 if __name__ == "__main__":

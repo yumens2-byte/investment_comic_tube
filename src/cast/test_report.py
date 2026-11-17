@@ -67,3 +67,13 @@ def test_send_report_swallows_any_network_error(monkeypatch):
     monkeypatch.setattr(rep.urllib.request, "urlopen",
                         lambda req, timeout=30: (_ for _ in ()).throw(TimeoutError("timed out")))
     assert rep.send_report("x") is False
+
+
+def test_main_never_raises(monkeypatch):
+    """부록 Z-2 — env 이상·전송 오류 등 어떤 경우에도 main은 예외를 던지지 않는다."""
+    monkeypatch.setenv("CAST_RUN_CONCLUSION", "x")
+    monkeypatch.setenv("CAST_RUN_TIER", "T3")
+    monkeypatch.setenv("CAST_RUN_COST", "not-a-number")   # float 변환 실패 유도
+    monkeypatch.setenv("CAST_RUN_CUTS", "7")
+    monkeypatch.setattr(rep, "send_report", lambda t: (_ for _ in ()).throw(RuntimeError("boom")))
+    rep.main()   # 예외가 전파되지 않으면 통과
