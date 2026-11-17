@@ -26,7 +26,8 @@ SCRIPT_VERSION = 1
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 MAX_RESOLVED_CHARS = 36        # 검증: 토큰 대입 후 36자
 MAX_SITUATION_WORDS = 45
-FORBIDDEN = re.compile(r"매수|매도|사라|팔아라|수익 보장|무조건|확실한 수익")
+# DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
+FORBIDDEN = re.compile(r"매수|매도|사라[.!?]?$|사세요|팔아라|파세요|수익\s*보장|무조건|확실한\s*수익")
 AXIS_FACT_KEY = {"rates": "TNX", "volatility": "VIX", "momentum": "NASDAQ"}
 
 try:

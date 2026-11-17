@@ -410,3 +410,15 @@ def test_fetch_last_story_client_unavailable(monkeypatch):
     monkeypatch.setattr(L, "_table", boom)
     with pytest.raises(L.CastLedgerUnavailable):
         L.fetch_last_story(include_generated=False)
+
+
+def test_fetch_last_story_excludes_current_run(db):
+    """DN2026_0115 통합 — 같은 run 재실행이 자기 generated 행을 직전 회차로 잡지 않는다."""
+    db.rows += [
+        {"run_id": "100", "run_date_kst": "2026-11-14", "status": "published", "created_at": "a",
+         "villain": "Debt Titan", "story_state": {"season_week": 1}},
+        {"run_id": "200", "run_date_kst": "2026-11-21", "status": "generated", "created_at": "b",
+         "villain": "Debt Titan", "story_state": {"season_week": 2}},
+    ]
+    out = L.fetch_last_story(include_generated=True, exclude_run_id="200")
+    assert out["run_id"] == "100"

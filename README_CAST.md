@@ -1,4 +1,4 @@
-# CAST-LINE — 주 1회 앙상블 Shorts (v1.1.0, DN2026_0114)
+# CAST-LINE — 주 1회 앙상블 Shorts (v1.2.0, DN2026_0114·0115)
 
 EDT 일간 라인(pipeline.yml)과 병렬로 도는 주 1회 파이프라인이다. 기존 파이프라인 파일은 수정하지 않는다.
 예외는 DN2026_0114로 승인된 2건이다: tests.yml에 CAST pytest 단계 추가, .gitignore에 `artifacts_cast/` 추가.
@@ -38,6 +38,37 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 - **업로드 예외**: 업로드 중 예외가 나거나 video_id가 없으면 실재 여부를 알 수 없다. 이 경우 행은 `uploading`으로 남고 같은 날 재발행이 막힌다. 정정 절차는 scripts/rollback_live.md 2-1을 따른다.
 - **알려진 한계**: 기존 src/publisher.py는 video_id 전체를 로그에 남긴다. CAST는 기존 파일을 수정하지 않으므로, 이 문제는 레포 카드 Known Issue로 관리한다.
 
+## P2 스토리라인·내레이션 (v1.2.0, DN2026_0115)
+
+- **스토리 결정**(plan):
+  - `storyline.decide`가 `market_regime.select_villain`의 3축 점수로 이번 주 축과 빌런을 정한다.
+  - 캐논에 등재된 빌런만 등장한다. 지금은 Debt Titan뿐이라, 다른 축이 선택되면 Debt Titan이 그 축의 공격 형태로 나온다.
+  - 2순위 축은 다음 주 예고(omen)로 쓴다. 다음 회차는 예고가 맞았는지(hit) 빗나갔는지(twist)를 회수한다.
+  - TURN 비트 주역은 축으로 정한다. 금리는 EDT, 변동성은 FG-01, 과열은 LEV-01이다.
+  - 시즌은 4주, 같은 빌런은 최대 3주 연속이다.
+- **대본**(plan, `script.py`):
+  - Gemini(`gemini-3.6-flash`)가 비트별 한국어 1문장과 영문 상황값을 만든다.
+  - 수치는 FACT 토큰으로만 넣는다(`market_facts`). 문장 길이 상한은 36자, 투자 권유 금칙어를 검사한다.
+  - 위반이 있으면 1회 재호출하고, 그래도 위반인 비트는 템플릿 문장으로 바꾼다.
+  - dry_run과 키가 없는 경우에는 결정적 템플릿을 쓴다(외부 호출 0).
+- **TTS**(generate, `narration.py`):
+  - `src.tts.synthesize_narrations`로 합성한다. 모델은 `CAST_TTS_MODEL`(기본 gemini-3.8-flash-tts), 음성은 `TTS_VOICE`(기본 Charon)이다.
+  - 첫 fal 제출 전에 실행한다. 컷(6초)에 넣으려면 1.15배를 넘게 압축해야 하는 문장이 있으면 fal 호출 없이 차단한다.
+- **합성**(publish, `compose.py`):
+  - 컷 길이는 max(5초, 내레이션 길이 + 0.6초)로 자르고, 원본 컷보다 길게 늘이지 않는다.
+  - 내레이션은 컷 시작점에 배치하고 BGM 0.15와 섞은 뒤 loudnorm -14 LUFS로 맞춘다.
+  - 자막은 일간 라인과 같은 adaptive 레이아웃(`caption_layout`, Noto CJK)을 쓴다.
+- **원장**: 005가 cast_runs에 villain·story_state·script를 추가한다. 연속성 조회는 live에서 published만, shadow에서는 generated도 포함한다. 현재 run은 조회에서 제외한다.
+- **영상 프롬프트**: 캐논 `_cast_video_canon`의 캐릭터별 영문 고정 블록에 대본 situation_en을 덧붙인다. 화면 텍스트는 금지다.
+
+### 추가 운영 설정
+
+| 종류 | 이름 | 값 |
+|---|---|---|
+| Secret | GEMINI_API_KEY | 일간 라인과 공용 |
+| Variable | CAST_TTS_MODEL / CAST_TTS_VOICE | gemini-3.8-flash-tts / Charon (선택) |
+| DB | supabase/migrations/005_cast_story.sql | shadow 전환 전 적용 필수(plan이 연속성 조회 시 컬럼 필요) |
+
 ## 운영 설정
 
 | 종류 | 이름 | 값·기본 |
@@ -69,4 +100,4 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 ## 테스트
 
-`PYTHONPATH=. python -m pytest -q src/cast/` — 143 passed (2026-11-17, 기준 e3745a2의 41에서 증가).
+`PYTHONPATH=. python -m pytest -q src/cast/` — 231 passed (2026-11-18, 기준 e3745a2의 41에서 증가).

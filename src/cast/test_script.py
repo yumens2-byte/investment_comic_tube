@@ -189,3 +189,11 @@ def test_check_beat_situation_rules():
     assert C.check_beat({"narration": "고요하다", "situation_en": "word " * 46}, SNAP)[0] == "situation_too_long"
     assert C.check_beat({"narration": "고요하다", "situation_en": "Shot 2 of city"}, SNAP)[0] == "situation_has_digit"
     assert C.check_beat(None, SNAP)[0] == "missing_beat"
+
+
+@pytest.mark.parametrize("text,bad", [("안개가 사라진다", False), ("지금 사라", True), ("당장 사세요", True),
+                                      ("수익 보장", True), ("손절도 전략이다", False)])
+def test_forbidden_words_precise(text, bad):
+    """DN2026_0115 통합 — '사라' 단독 오탐 제거, 명령형만 차단."""
+    from src.cast.script import FORBIDDEN
+    assert bool(FORBIDDEN.search(text)) is bad

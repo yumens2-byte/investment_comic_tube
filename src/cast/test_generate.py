@@ -195,6 +195,8 @@ def run_env(monkeypatch, tmp_path):
     monkeypatch.setattr(L, "add_cost", lambda rid, usd: calls["add"].append(usd) or sum(calls["add"]))
     monkeypatch.setattr(L, "mark", lambda rid, st, **f: calls["mark"].append((st, f)))
     monkeypatch.setattr(L, "month_spent_usd", lambda d: calls["month"].append(d) or 0.0)
+    calls["story"] = []   # DN2026_0115 통합: 실 ledger.record_story 존재 — 가짜로 대체
+    monkeypatch.setattr(L, "record_story", lambda *a: calls["story"].append(a), raising=False)
 
     def write(n=3, mode="shadow"):
         plan_file.write_text(json.dumps({"tier": "T3", "plan": _plan(n), "mode": mode,
@@ -393,7 +395,7 @@ def test_prompt_v2_villain_attack_negative_and_no_text():
     assert "The hero dodges a falling chain." in p
     assert "No text, no numbers, no letters anywhere in frame." in p
     neg = canon["_cast_video_canon"]["characters"]["FG-01"]["negative_en"].strip().rstrip(".")
-    assert p.endswith(f" Avoid: {neg}.")
+    assert p.endswith(f" Strictly: {neg}.")
     assert len(p) <= G.PROMPT_MAX_CHARS
 
 
@@ -402,7 +404,7 @@ def test_prompt_v2_unknown_character_name_only_and_no_axis():
     assert p == ("Comic-book cinematic vertical shot. Chaos Reaper. Shadows swirl."
                  " Single action, single camera move. No text, no numbers, no letters anywhere in frame.")
     p2 = G.build_cut_prompt_v2(["Debt Titan"], "x.", _load_canon(), None)
-    assert "chains" not in p2 and "Avoid" not in p2
+    assert "chains" not in p2 and "Strictly" not in p2
 
 
 def test_prompt_v2_too_long_and_empty_situation():

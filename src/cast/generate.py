@@ -99,7 +99,7 @@ def build_cut_prompt_v2(characters: list[str], situation_en: str, canon: dict,
     prompt = PROMPT_HEAD + " ".join(blocks)
     prompt = f"{prompt} {situation}{PROMPT_TAIL}" if blocks else f"{PROMPT_HEAD}{situation}{PROMPT_TAIL}"
     if negatives:
-        prompt += " Avoid: " + "; ".join(negatives) + "."
+        prompt += " Strictly: " + "; ".join(negatives) + "."   # 캐논 negative_en이 이미 no …형
     if len(prompt) > PROMPT_MAX_CHARS:
         raise GenerationError(f"prompt_too_long chars={len(prompt)} max={PROMPT_MAX_CHARS}")
     return prompt

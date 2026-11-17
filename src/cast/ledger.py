@@ -185,7 +185,7 @@ def record_story(run_id: str, villain: str, story_state: dict, script: dict) -> 
     logger.info("ledger_story run_id=%s villain=%s", run_id, villain)
 
 
-def fetch_last_story(include_generated: bool) -> dict | None:
+def fetch_last_story(include_generated: bool, exclude_run_id: str | None = None) -> dict | None:
     """story_state가 있는 최신 1행(run_date_kst desc, created_at desc). 없으면 None. # DN2026_0115
 
     include_generated=False → published만, True → published+generated(shadow 연속성).
@@ -197,6 +197,8 @@ def fetch_last_story(include_generated: bool) -> dict | None:
         res = (tbl.select("run_id,run_date_kst,villain,story_state,created_at")
                .in_("status", list(statuses))
                .not_.is_("story_state", "null")
+               # DN2026_0115 통합: 같은 run 재실행이 자기 행을 '직전 회차'로 잡지 않게 제외
+               .neq("run_id", exclude_run_id or "")
                .order("run_date_kst", desc=True)
                .order("created_at", desc=True)
                .limit(1).execute())

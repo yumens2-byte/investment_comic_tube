@@ -91,7 +91,7 @@ jobs:
           # DN2026_0115 P2 — 스토리 레이어: 직전 회차(fail-closed) → 빌런·축·복선 → 캐스팅 → 대본
           from src.cast import ledger, storyline
           from src.cast.script import build_script
-          prev = (ledger.fetch_last_story(include_generated=(mode == "shadow"))
+          prev = (ledger.fetch_last_story(include_generated=(mode == "shadow"), exclude_run_id=os.environ.get("GITHUB_RUN_ID"))
                   if mode in ("shadow", "live") else None)   # DB 오류 시 plan 실패(fail-closed)
           decision = storyline.decide(data, prev)
           plan = cast_for_tier(tier, villain=decision["villain"])
