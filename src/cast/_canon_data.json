@@ -76,5 +76,36 @@
       "score": "9/9 확정",
       "안건": "해소 — 텍스트 0건, x4 패널 정확 4건"
     }
+  },
+  "_cast_video_canon": {
+    "dn": "DN2026_0115",
+    "status": "APPROVED_BY_JARVIS_DELEGATED",
+    "approved": "2026-11-18 회장 위임('모든 승인은 자비스에게') — 자비스 승인. 원문 spec_kr_verbatim 번역본, 원문과 충돌 시 원문 우선",
+    "rule": "영상 프롬프트 = 아래 prompt_en 고정 블록 + 비트 상황값(situation_en). 매 발행마다 새로 쓰지 않는다(규칙서 §3). 화면 텍스트·숫자·글자 금지 — 캐논의 x3/x4 표기는 글자 없이 형태로 표현한다.",
+    "characters": {
+      "EDT": {
+        "prompt_en": "EDT, a towering tiger warrior: orange fur with black stripes, roaring tiger face with bared fangs, glowing golden eyes, striped mane, bronze-and-steel Roman full plate armor with shoulder spikes, golden D emblem in a round frame on the chest, full red cape attached only at the back, huge two-handed electric chainsaw crackling with blue energy, extremely muscular tiger body",
+        "persona_kr": "원칙의 수호자. 짧고 단호하게 말한다. 비중·분산·손절·관망 같은 원칙으로 결론을 낸다."
+      },
+      "FG-01": {
+        "prompt_en": "Exposure Futures Girl, a slender woman with a calm, calculating face, waist-length straight loose hair fading from black to dark purple, dark black armor with thin violet neon trim, dual pistols glowing with violet energy, violet energy waist belt, four glowing violet exposure markers floating around her, abstract holographic light panels without any numbers or letters",
+        "negative_en": "no shoulder-length hair, no ponytail, no bob cut, no blonde, silver or red hair, no retro style",
+        "persona_kr": "계산적이고 차분하다. 위험 노출을 재고 헤지로 균형을 잡는다."
+      },
+      "LEV-01": {
+        "prompt_en": "Leverage Muscle Man, a human man with flaming hair from red to orange, sharp golden eyes, extremely muscular bare upper body with dark ash skin, dark black cargo pants and combat boots, a massive barbell with three glowing red-gold rings, red-gold aura",
+        "negative_en": "no D emblem, no platinum white, no mechanical armor, not an animal-human",
+        "persona_kr": "힘을 세 배로 키우지만 추락도 세 배라는 것을 아는 경고자. 과신을 경계시킨다."
+      },
+      "Debt Titan": {
+        "prompt_en": "Debt Titan, a colossal spiked monster in black spiked armor with glowing lava cracks",
+        "attack_forms_en": {
+          "rates": "crushing the city with the weight of rising interest, heavy chains of debt",
+          "volatility": "splitting into flickering chaotic shadows, the skyline shaking violently",
+          "momentum": "charging forward in a reckless frenzy, overheated lava bursting from its cracks"
+        }
+      }
+    },
+    "villain_gate": "캐논 prompt_en이 있는 빌런만 출연. 그 외(select_villain의 Chaos Reaper·Bull Brute)는 캐논 등재 전까지 Debt Titan + 해당 축 attack_form으로 대체(DN2026_0115 D3)."
   }
 }
