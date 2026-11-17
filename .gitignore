@@ -151,6 +151,8 @@ activemq-data/
 .env
 .envrc
 artifacts/
+# DN2026_0114: CAST-LINE 실행 산출물(계획·컷·원장)은 커밋하지 않는다.
+artifacts_cast/
 data/
 logs/
 output_short.mp4
