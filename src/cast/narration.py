@@ -2,8 +2,10 @@
 
 - 합성은 src.tts.synthesize_narrations 재사용(무수정, import만). 반환 (paths, reason).
 - reason 이 None 이 아니거나 경로에 None 이 있으면 NarrationError(fail-closed, 부분 내레이션 발행 금지).
-- 각 wav 길이는 ffprobe(timeout 30)로 측정, 컷 예산(budget_sec) 대비 tempo 산정.
-  tempo = 1.0 (sec ≤ budget-0.3) / sec÷(budget-0.3) 그 외, 1.15 초과면 NarrationError.
+- DN2026_0116: 전 비트 '빠르고 또렷한 속도' 지시 → 앞뒤 무음 제거 → ffprobe 실측
+  → 10초 컷 기준 1.10배 넘게 압축해야 하는 비트만 '아주 빠르게' 1회 재합성(짧아질 때만 교체)
+  → fit_cuts(컷 5~10초, tempo ≤1.25, 합성 ≤58초) 위반이면 NarrationError(fal 호출 전).
+  tempo_for 는 DN2026_0115 호환용(미사용).
 - 키·외부 응답 본문은 로그·예외 메시지에 남기지 않는다(reason 코드만).
 """
 from __future__ import annotations
@@ -47,9 +49,15 @@ class NarrationError(RuntimeError):
     """내레이션 합성·길이 검증 실패 — fal 제출 전에 중단한다."""
 
 
-def tone_for(role: str | None) -> str | None:
-    """역할 → 톤. 미정의 역할은 None(src.tts DEFAULT_TONE 사용)."""
-    return ROLE_TONE.get(role or "")
+PACE_PREFIX = "빠르고 또렷한 속도의 "          # DN2026_0116 D안: shadow 실측 초당 2.0~3.1자 → 전 비트 속도 지시
+RETRY_PACE_PREFIX = "아주 빠르고 또렷한 속도의 "  # DN2026_0116 D안: 과길이 비트 1회 재합성
+DEFAULT_ROLE_TONE = "자연스러운 톤"
+RETRY_TEMPO = 1.10        # 10초 컷 기준 이 배율을 넘게 압축해야 하는 비트는 1회 재합성
+
+
+def tone_for(role: str | None, retry: bool = False) -> str:
+    """역할 → 낭독 지시(속도 + 톤). 미정의 역할은 자연스러운 톤. # DN2026_0115 → DN2026_0116"""
+    return (RETRY_PACE_PREFIX if retry else PACE_PREFIX) + ROLE_TONE.get(role or "", DEFAULT_ROLE_TONE)
 
 
 def tempo_for(sec: float, budget_sec: float) -> float:
@@ -185,6 +193,27 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     secs = [_probe(wav) for wav in paths]
     for b, r, sec, text in zip(beats, raw, secs, texts):
         logger.info("narration_measured cut=%s raw=%.2f sec=%.2f chars=%d", b["cut"], r, sec, len(text))
+    # DN2026_0116 D안: 10초 컷에 RETRY_TEMPO 배 넘게 압축해야 하는 비트만 '아주 빠르게'로 1회 재합성.
+    # 재합성이 실패하거나 더 길면 원본 유지(fail-open) → fit_cuts 가 최종 판정(fail-closed).
+    slow = [i for i, s in enumerate(secs) if s / (CUT_MAX_SEC - CUT_TAIL_SEC) > RETRY_TEMPO]
+    if slow:
+        rpaths, rreason = _tts_fn()([texts[i] for i in slow], output_dir=os.path.join(out_dir, "retry"),
+                                    tones=[tone_for(beats[i].get("role"), retry=True) for i in slow],
+                                    voice_name=voice, model_name=model)
+        for k, i in enumerate(slow):
+            rp = rpaths[k] if rreason is None and k < len(rpaths) else None
+            if not rp:
+                logger.warning("narration_retry_failed cut=%s reason=%s", beats[i]["cut"], rreason)
+                continue
+            try:
+                rp = trim_silence(rp)
+                rsec = _probe(rp)
+            except NarrationError:
+                logger.warning("narration_retry_probe_failed cut=%s", beats[i]["cut"])
+                continue
+            logger.info("narration_retry cut=%s before=%.2f after=%.2f", beats[i]["cut"], secs[i], rsec)
+            if rsec < secs[i]:
+                paths[i], secs[i] = rp, rsec
     fitted = fit_cuts(secs)
     out: list[dict] = []
     for b, wav, sec, f in zip(beats, paths, secs, fitted):

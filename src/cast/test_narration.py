@@ -46,7 +46,9 @@ def test_synthesize_real_wav(tmp_path, monkeypatch):
     # DN2026_0116: 컷 길이 = max(5, ceil(sec+0.6)) → 2.0→5, 5.7→7, 6.2→7 (합 19 ≥ 16)
     assert [o["cut_sec"] for o in out] == [5, 7, 7] and all(o["tempo"] == 1.0 for o in out)
     assert calls[0]["model"] == "gemini-3.8-flash-tts" and calls[0]["voice"] == "Charon"
-    assert calls[0]["tones"] == ["긴박한 톤", "절박한 톤", "차분한 톤"]
+    assert calls[0]["tones"] == ["빠르고 또렷한 속도의 긴박한 톤", "빠르고 또렷한 속도의 절박한 톤",
+                                 "빠르고 또렷한 속도의 차분한 톤"]
+    assert len(calls) == 1   # 재합성 대상 없음
 
 
 def test_tempo_boundaries():
@@ -89,14 +91,16 @@ def test_none_path_raises(tmp_path, monkeypatch):
 
 
 def test_tone_mapping():
-    assert N.tone_for("ESTABLISH_THREAT") == "긴박한 톤"
-    assert N.tone_for("ESCALATE") == "점점 고조되는 톤"
-    assert N.tone_for("ENGAGE") == "단호한 톤"
-    assert N.tone_for("CRISIS") == "절박한 톤"
-    assert N.tone_for("TURN") == "반격하듯 힘찬 톤"
-    assert N.tone_for("RESOLVE") == "차분한 톤"
-    assert N.tone_for("NEXT_OMEN") == "낮고 불길한 톤"
-    assert N.tone_for("AFTERMATH_CALM") is None and N.tone_for(None) is None
+    p = N.PACE_PREFIX
+    assert N.tone_for("ESTABLISH_THREAT") == p + "긴박한 톤"
+    assert N.tone_for("ESCALATE") == p + "점점 고조되는 톤"
+    assert N.tone_for("ENGAGE") == p + "단호한 톤"
+    assert N.tone_for("CRISIS") == p + "절박한 톤"
+    assert N.tone_for("TURN") == p + "반격하듯 힘찬 톤"
+    assert N.tone_for("RESOLVE") == p + "차분한 톤"
+    assert N.tone_for("NEXT_OMEN") == p + "낮고 불길한 톤"
+    assert N.tone_for("AFTERMATH_CALM") == p + "자연스러운 톤" == N.tone_for(None)
+    assert N.tone_for("NEXT_OMEN", retry=True) == "아주 빠르고 또렷한 속도의 낮고 불길한 톤"
 
 
 def test_plan_only_counts_chars():
@@ -114,7 +118,7 @@ def test_fit_cuts_rules():
     with pytest.raises(N.NarrationError, match="narration_total_too_long"):
         N.fit_cuts([9.8] * 7)                            # 7×(9.8/1.25+0.6)=59.1 > 58
     with pytest.raises(N.NarrationError, match=r"beats=\[1\] secs=\[1.00,12.00\]"):
-        N.fit_cuts([1.0, 12.0])                          # 12/9.4=1.277 > 1.25                          # 실패 시 전체 길이 기록
+        N.fit_cuts([1.0, 12.0])                          # 12/9.4=1.277 > 1.25, 실패 시 전체 길이 기록
 
 
 def test_fit_cuts_shadow_measured_case():
@@ -164,3 +168,42 @@ def test_trim_silence_cuts_head_and_tail(tmp_path):
 def test_trim_silence_fail_open(tmp_path):
     missing = str(tmp_path / "none.wav")
     assert N.trim_silence(missing) == missing
+
+
+
+def _seq_tts(calls, plan):
+    """호출 순서별 길이 계획 plan=[[secs...], [secs...]] 로 wav 생성."""
+    def fake(narrations, output_dir="x", tones=None, voice_name=None, model_name=None, **_):
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        secs = plan[len(calls)]
+        calls.append({"n": list(narrations), "dir": output_dir, "tones": tones})
+        paths = []
+        for i, d in enumerate(secs):
+            p = f"{output_dir}/narration_{i}.wav"
+            subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
+                            f"sine=frequency=330:duration={d}:sample_rate=24000", "-ac", "1", p],
+                           check=True, capture_output=True, timeout=60)
+            paths.append(p)
+        return paths, None
+    return fake
+
+
+@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
+def test_slow_beat_retried_fast_and_replaced(tmp_path, monkeypatch):
+    """DN2026_0116 D안 — 11.88초 비트만 '아주 빠르게' 재합성, 짧아지면 교체 후 통과."""
+    calls = []
+    monkeypatch.setattr(tts, "synthesize_narrations", _seq_tts(calls, [[3.0, 11.88, 4.0], [8.5]]))
+    out = N.synthesize(_beats(), str(tmp_path))
+    assert len(calls) == 2 and calls[1]["n"] == [_beats()[1]["narration"]]
+    assert calls[1]["tones"][0].startswith(N.RETRY_PACE_PREFIX) and calls[1]["dir"].endswith("retry")
+    assert abs(out[1]["sec"] - 8.5) < 0.05 and "retry" in out[1]["wav"]
+
+
+@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
+def test_slow_beat_retry_longer_keeps_original_then_blocks(tmp_path, monkeypatch):
+    calls = []
+    monkeypatch.setattr(tts, "synthesize_narrations", _seq_tts(calls, [[3.0, 12.5, 4.0], [12.9]]))
+    with pytest.raises(N.NarrationError, match="narration_too_long beats=\\[1\\]"):
+        N.synthesize(_beats(), str(tmp_path))
+    assert len(calls) == 2
