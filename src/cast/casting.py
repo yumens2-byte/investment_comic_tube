@@ -34,6 +34,17 @@ T3_PLAN = [
     {"cut": 7, "role": "NEXT_OMEN", "characters": ["EDT", "villain"]},
 ]
 
+# T2 5컷 50s — EDT + 히어로 1증원 (상세설계 v1.0 §2: T2 = 50s 5컷).
+# REF: FG-01 확정(9/9) — ESCALATE 증원을 LEV-01 대신 FG-01로 배정하면
+# LEV-01 승인 전에도 T2가 동작한다. 빌런 컷은 캐논 텍스트 기반(허용).
+T2_PLAN = [
+    {"cut": 1, "role": "ESTABLISH_THREAT", "characters": ["villain"]},
+    {"cut": 2, "role": "ESCALATE", "characters": ["FG-01"]},
+    {"cut": 3, "role": "ENGAGE", "characters": ["EDT"]},
+    {"cut": 4, "role": "CRISIS", "characters": ["villain", "FG-01"]},
+    {"cut": 5, "role": "RESOLVE", "characters": ["EDT"]},
+]
+
 # T1 3컷 — EDT 단독 (기존 AFTERMATH 계약 승계).
 T1_PLAN = [
     {"cut": 1, "role": "AFTERMATH_CALM", "characters": ["EDT"]},
@@ -74,9 +85,9 @@ def _load_canon() -> dict:
 def cast_for_tier(tier: str, villain: str = "Debt Titan") -> list[dict]:
     """tier → 컷별 캐스트 계획. REF 미확정 히어로 포함 시 CastPlanError."""
     canon = _load_canon()
-    plan = {"T1": T1_PLAN, "T3": T3_PLAN}.get(tier)
+    plan = {"T1": T1_PLAN, "T2": T2_PLAN, "T3": T3_PLAN}.get(tier)
     if plan is None:
-        raise CastPlanError(f"미정의 계층 '{tier}' — T1/T3만 지원 (추측 확장 금지)")
+        raise CastPlanError(f"미정의 계층 '{tier}' — T1/T2/T3만 지원 (추측 확장 금지)")
 
     resolved = []
     for cut in plan:

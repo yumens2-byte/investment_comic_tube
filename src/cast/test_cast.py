@@ -68,9 +68,18 @@ def test_t1_always_runs(canon_file):
     assert all(c == ["EDT"] or "villain" in c or "EDT" in c for c in [p["characters"] for p in plan])
 
 
+def test_t2_runs_with_fg01_confirmed(canon_file):
+    """T2 5컷 — FG-01 확정 상태면 LEV-01 승인 없이도 동작한다."""
+    plan = cast_for_tier("T2", villain="Debt Titan")
+    assert len(plan) == 5
+    chars = [c for p in plan for c in p["characters"]]
+    assert "LEV-01" not in chars            # 미확정 캐릭터 미배정
+    assert "FG-01" in chars                 # 확정 히어로 증원
+
+
 def test_unknown_tier_rejected(canon_file):
-    with pytest.raises(CastPlanError, match="T2"):
-        cast_for_tier("T2")
+    with pytest.raises(CastPlanError, match="T1/T2/T3"):
+        cast_for_tier("T4")
 
 
 def test_missing_canon_file_blocks(monkeypatch, tmp_path):

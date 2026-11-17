@@ -1,0 +1,41 @@
+{
+ "tier": "T2",
+ "plan": [
+  {
+   "cut": 1,
+   "role": "ESTABLISH_THREAT",
+   "characters": [
+    "Debt Titan"
+   ]
+  },
+  {
+   "cut": 2,
+   "role": "ESCALATE",
+   "characters": [
+    "FG-01"
+   ]
+  },
+  {
+   "cut": 3,
+   "role": "ENGAGE",
+   "characters": [
+    "EDT"
+   ]
+  },
+  {
+   "cut": 4,
+   "role": "CRISIS",
+   "characters": [
+    "Debt Titan",
+    "FG-01"
+   ]
+  },
+  {
+   "cut": 5,
+   "role": "RESOLVE",
+   "characters": [
+    "EDT"
+   ]
+  }
+ ]
+}
