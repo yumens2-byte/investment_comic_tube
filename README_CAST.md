@@ -52,7 +52,7 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
   - 수치는 FACT 토큰으로만 넣는다(`market_facts`). 문장 길이 상한은 36자, 투자 권유 금칙어를 검사한다.
   - 위반이 있으면 1회 재호출하고, 그래도 위반인 비트는 템플릿 문장으로 바꾼다.
   - dry_run과 키가 없는 경우에는 결정적 템플릿을 쓴다(외부 호출 0).
-- **TTS**(generate, `narration.py`):
+- **TTS**(generate, `narration.py`): 내레이션 회차는 `CAST_CUT_SEC` 6 이상이어야 한다(5면 T1 합계가 15초 경계에 걸려 차단).
   - `src.tts.synthesize_narrations`로 합성한다. 모델은 `CAST_TTS_MODEL`(기본 gemini-3.8-flash-tts), 음성은 `TTS_VOICE`(기본 Charon)이다.
   - 첫 fal 제출 전에 실행한다. 컷(6초)에 넣으려면 1.15배를 넘게 압축해야 하는 문장이 있으면 fal 호출 없이 차단한다.
 - **합성**(publish, `compose.py`):
@@ -101,4 +101,4 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 ## 테스트
 
-`PYTHONPATH=. python -m pytest -q src/cast/` — 237 passed (2026-11-18, 기준 e3745a2의 41에서 증가).
+`PYTHONPATH=. python -m pytest -q src/cast/` — 262 passed (2026-11-18, 기준 e3745a2의 41에서 증가).

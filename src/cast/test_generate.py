@@ -541,3 +541,25 @@ def test_no_script_keeps_legacy_prompt(script_env, monkeypatch):
     gen_main.main()
     assert all(p.startswith(gen_main.CANON_PROMPT) for p in prompts)
     assert "narration" not in script_env["ledger"]()
+
+
+def test_narration_requires_cut_sec_6(script_env, monkeypatch):
+    """R6-06 D3 — 내레이션 회차에서 CAST_CUT_SEC=5는 과금 전 차단(T1 합계 15초 경계)."""
+    script_env["write_script"](3, "live")
+    monkeypatch.setenv("CAST_CUT_SEC", "5")
+    monkeypatch.setattr(G, "generate_cut", lambda *a, **k: (_ for _ in ()).throw(AssertionError("fal 호출")))
+    with pytest.raises(G.GenerationError, match="cut_sec_too_short_for_narration"):
+        gen_main.main()
+    assert script_env["add"] == [] and script_env["open"] == []
+
+
+def test_next_omen_prompt_uses_omen_axis():
+    """R6-05 #14 — NEXT_OMEN 컷은 다음 주 예고 축의 공격 형태를 쓴다."""
+    canon = _load_canon()["_cast_video_canon"]
+    forms = canon["characters"]["Debt Titan"]["attack_forms_en"]
+    cut = {"cut": 7, "role": "NEXT_OMEN", "characters": ["EDT", "Debt Titan"]}
+    beat = {"situation_en": "A shadow looms on the horizon."}
+    p = gen_main._cut_prompt(cut, beat, canon, "volatility", "rates")
+    assert forms["rates"] in p and forms["volatility"] not in p
+    other = {"cut": 4, "role": "CRISIS", "characters": ["Debt Titan", "FG-01"]}
+    assert forms["volatility"] in gen_main._cut_prompt(other, beat, canon, "volatility", "rates")

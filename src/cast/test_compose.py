@@ -141,3 +141,16 @@ def test_compose_with_narration_and_captions(tmp_path, no_bgm):
     video = next(s for s in info["streams"] if s["codec_type"] == "video")
     assert (video["width"], video["height"]) == (1080, 1920)
     assert 15.0 <= res["duration_sec"] <= 60.0
+
+
+def test_narration_longer_than_clip_blocked(tmp_path):
+    """R6-05 #4 — 클립이 내레이션보다 짧으면 다음 비트와 겹침 → ComposeError."""
+    from src.cast import compose as CP
+    wav = tmp_path / "n.wav"
+    wav.write_bytes(b"x")
+    ordered = [{"cut": i, "path": "x"} for i in (1, 2, 3)]
+    narr = [{"cut": i, "wav": str(wav), "sec": 5.8, "tempo": 1.0} for i in (1, 2, 3)]
+    with pytest.raises(CP.ComposeError, match="내레이션이 컷보다 김"):
+        CP._narration_plan(ordered, narr, [5.5, 6.6, 6.6])
+    plan = CP._narration_plan(ordered, narr, [6.6, 6.6, 6.6])
+    assert [p["target_sec"] for p in plan] == [6.4, 6.4, 6.4]

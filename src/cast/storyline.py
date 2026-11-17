@@ -85,6 +85,17 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
     canon = canon or load_cast_canon()
     allowed = allowed_villains(canon)
     prev_ss = dict((prev or {}).get("story_state") or {})
+    # R6-06 D2: 같은 ISO 주 재실행은 그 회차가 썼던 '직전 주 기준(basis)'으로 다시 계산한다.
+    # (같은 주 회차를 직전 주로 취급하면 스트릭 회전·payoff가 원 회차와 달라진다)
+    if prev and run_date_kst and _same_iso_week(prev.get("run_date_kst"), run_date_kst):
+        basis = prev_ss.get("basis")
+        logger.info("story_same_week_rerun basis=%s", "yes" if basis else "none")
+        if basis:
+            prev = {"run_id": prev.get("run_id"), "villain": basis.get("villain_raw"),
+                    "run_date_kst": None, "story_state": dict(basis)}
+            prev_ss = dict(basis)
+        else:
+            prev, prev_ss = None, {}
     # DN2026_0115 (R6-05 #1): 회전·스트릭은 게이트 전 이름(villain_raw) 기준이어야 한다.
     # 원장 villain 컬럼은 게이트 후 이름(현재 항상 Debt Titan)이라 그대로 넘기면 회전이 깨진다.
     prev_raw = prev_ss.get("villain_raw") or (prev or {}).get("villain") or prev_ss.get("villain")
@@ -101,12 +112,7 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
     omen_axis = AXIS[omen_raw]
     omen_villain = gate(omen_raw, allowed)
 
-    if prev and run_date_kst and _same_iso_week(prev.get("run_date_kst"), run_date_kst):
-        # DN2026_0115 (R6-05 #15): 같은 주 재실행(수동 shadow 등)은 주차·스트릭을 올리지 않는다
-        season = int(prev_ss.get("season_no") or 1)
-        week = int(prev_ss.get("season_week") or 1)
-        streak = int(prev_ss.get("villain_streak") or 1) if prev_raw == villain_raw else 1
-    elif prev:
+    if prev:
         week = int(prev_ss.get("season_week") or 0) + 1
         season = int(prev_ss.get("season_no") or 1)
         if week > SEASON_WEEKS:
@@ -138,6 +144,10 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
         "ending_type": _ending_type(prev),
         "omen_payoff": payoff,
         "prev_unresolved": prev_ss.get("unresolved"),
+        # R6-06 D2: 이번 회차 계산에 쓴 직전 주 상태 — 같은 주 재실행 시 동일 계산 재현용
+        "basis": ({k: prev_ss.get(k) for k in ("villain_raw", "villain", "villain_streak", "season_no",
+                                               "season_week", "omen_villain", "omen_axis", "ending_type",
+                                               "unresolved")} | {"villain_raw": prev_raw}) if prev else None,
     }
 
 
@@ -164,4 +174,5 @@ def next_state(decision: dict, script: dict) -> dict:
         "ending_type": (script or {}).get("ending_type") or decision["ending_type"],
         "hero_focus": decision["hero_focus"],
         "unresolved": beats[-1]["narration"] if beats else None,
+        "basis": decision.get("basis"),   # R6-06 D2
     }

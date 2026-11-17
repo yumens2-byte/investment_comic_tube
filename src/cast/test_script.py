@@ -197,3 +197,42 @@ def test_forbidden_words_precise(text, bad):
     """DN2026_0115 통합 — '사라' 단독 오탐 제거, 명령형만 차단."""
     from src.cast.script import FORBIDDEN
     assert bool(FORBIDDEN.search(text)) is bad
+
+
+
+@pytest.mark.parametrize("text,bad", [
+    ("매수 기회다", True), ("매도 신호가 켜졌다", True), ("매수세가 거세다", False), ("매도세가 꺾였다", False),
+    ("던져라", True), ("던져", True), ("담아라", True), ("사두세요", True), ("정리하라", True),
+    ("원칙을 담아 맞선다", False), ("공포에 팔아 버린 개미들", False), ("사라진다", False),
+    ("손절도 원칙이다", False), ("VIX 18.70% 상승", False)])
+def test_forbidden_r6_06(text, bad):
+    """R6-06 D1·D4 — 단독 매수/매도 차단 복원, 던져라 추가, '아/어' 단독 오탐 제거."""
+    from src.cast.script import FORBIDDEN
+    assert bool(FORBIDDEN.search(text)) is bad
+
+
+@pytest.mark.parametrize("text,ok", [("공포 지수 22.90 — 혼돈", True), ("“따옴표”", True),
+                                     ("S&P 500 1.92% 하락", True), ("🚀 폭등", False), ("☆별", False)])
+def test_allowed_chars(text, ok):
+    """R6-05 #8·R6-06 D5 — 자막 미지원 글리프는 과금 전 차단, 대시·둥근따옴표 허용."""
+    from src.cast.script import ALLOWED_CHARS
+    assert bool(ALLOWED_CHARS.match(text)) is ok
+
+
+def test_merge_keeps_first_valid_when_second_violates(client, t3):
+    """R6-05 #12 — 1차 유효 비트는 2차에서 위반이어도 유지, 1차 위반·2차 유효는 2차 채택."""
+    first = good_beats(t3, c3="금리 5% 돌파한다")                 # cut3 위반
+    second = good_beats(t3, c2="지금 바로 매수하세요", c3="EDT가 다시 선다")  # cut2 위반, cut3 유효
+    client([first, second])
+    s = C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert s["source"] == "gemini"
+    assert s["beats"][1]["narration"].startswith("ESCALATE")      # 1차 유효본 유지
+    assert s["beats"][2]["narration"] == "EDT가 다시 선다"        # 2차 유효본 채택
+
+
+def test_merge_second_call_exception_keeps_first_valid(client, t3):
+    first = good_beats(t3, c3="금리 5% 돌파한다")
+    client([first, ConnectionError("x")])
+    s = C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert s["source"] == "gemini+template"
+    assert s["beats"][1]["narration"].startswith("ESCALATE")      # 1차 유효 유지, cut3만 템플릿

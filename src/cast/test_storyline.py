@@ -118,7 +118,7 @@ def test_next_state_fields(fake_select):
     d = S.decide({}, None)
     st = S.next_state(d, {"ending_type": "QUESTION", "beats": [{"narration": "a"}, {"narration": "끝"}]})
     assert set(st) == {"villain", "villain_raw", "axis", "villain_streak", "season_no", "season_week",
-                       "omen_villain", "omen_axis", "ending_type", "hero_focus", "unresolved"}
+                       "omen_villain", "omen_axis", "ending_type", "hero_focus", "unresolved", "basis"}
     assert st["unresolved"] == "끝" and st["villain"] == DT and st["villain_raw"] == CR
 
 
@@ -152,3 +152,22 @@ def test_same_iso_week_rerun_does_not_advance():
     assert (d2["season_week"], d2["villain_streak"]) == (d1["season_week"], d1["villain_streak"])
     d3 = S.decide(data, prev, run_date_kst="2026-11-28")
     assert d3["season_week"] == d1["season_week"] + 1
+
+
+
+def test_same_week_rerun_reproduces_original_decision():
+    """R6-06 D2 — 같은 주 재실행은 원 회차의 basis로 다시 계산: 빌런·스트릭·payoff·주차 동일."""
+    data = {"TNX": {"close": 4.0, "change_pct": 0.0, "dev_pct": 0.0}, "DXY": {"close": 100, "change_pct": 0.0, "dev_pct": 0.0},
+            "VIX": {"close": 35.0, "change_pct": 20.0, "dev_pct": 30.0},
+            "SPX": {"close": 7000, "change_pct": -3.0, "dev_pct": -4.0},
+            "NASDAQ": {"close": 25000, "change_pct": -3.5, "dev_pct": -5.0}}
+    prev, dates = None, ["2026-11-07", "2026-11-14", "2026-11-21"]
+    for day in dates:                                 # 변동성 3주 연속 → 스트릭 3
+        d = S.decide(data, prev, run_date_kst=day)
+        prev = {"run_id": day, "run_date_kst": day, "villain": d["villain"],
+                "story_state": S.next_state(d, {"beats": [{"narration": "x"}]})}
+    original = d
+    assert original["villain_streak"] == 3
+    rerun = S.decide(data, prev, run_date_kst="2026-11-21")   # 같은 주 재실행
+    for k in ("villain_raw", "villain_streak", "season_week", "omen_payoff", "ending_type", "omen_axis"):
+        assert rerun[k] == original[k], k

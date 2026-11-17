@@ -54,6 +54,11 @@ def _env_float(name: str, default: str) -> float:
         raise generate.GenerationError(f"{name} 해석 실패") from e
 
 
+def _script_beats_present(plan_doc: dict) -> bool:
+    script = plan_doc.get("script")
+    return bool(isinstance(script, dict) and script.get("beats"))
+
+
 def _cut_sec() -> int:
     raw = os.environ.get("CAST_CUT_SEC") or "6"
     try:
@@ -144,6 +149,9 @@ def main() -> None:
     opened = False   # DN2026_0114 (R6-02 #1): open_run 성공 전 실패는 원장 상태를 건드리지 않는다
     try:
         cut_sec = _cut_sec()
+        if _script_beats_present(plan_doc) and cut_sec < 6:
+            # R6-06 D3: 내레이션 회차는 컷 6초 이상 — 5초면 T1 합계가 합성 하한(15초)에 걸림(과금 후 실패)
+            raise generate.GenerationError(f"cut_sec_too_short_for_narration cut_sec={cut_sec}")
         per_cut = round(cut_sec * generate.FAL_PRICE_PER_SEC, 2)
         planned = round(len(plan) * cut_sec * generate.FAL_PRICE_PER_SEC, 2)
         state["planned_cost_usd"] = planned
