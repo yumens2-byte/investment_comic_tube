@@ -149,8 +149,8 @@ def main() -> None:
     paid = mode in ("shadow", "live")
     opened = False   # DN2026_0114 (R6-02 #1): open_run 성공 전 실패는 원장 상태를 건드리지 않는다
     try:
-        cut_sec = _cut_sec()
         narrated = _script_beats_present(plan_doc)
+        cut_sec = None if narrated else _cut_sec()   # DN2026_0116 R6-03: 내레이션 회차는 CAST_CUT_SEC 미사용
         price = generate.FAL_PRICE_PER_SEC
         if narrated:
             # DN2026_0116: 내레이션 회차는 TTS 실측으로 컷별 길이(5~10초)를 정한다.
@@ -202,16 +202,11 @@ def main() -> None:
         prior = float(cast_ledger.open_run(run_id, run_date_kst, tier, mode, market_snapshot) or 0.0)
         opened = True
         state["prior_cost_usd"] = prior
-        # DN2026_0115 (I-3): record_story 는 다른 구현자 몫 — 존재할 때만 호출, 실패는 fail-closed
-        record_story = getattr(cast_ledger, "record_story", None)
-        if beats and callable(record_story):
-            record_story(run_id, plan_doc.get("villain"), plan_doc.get("story_state_next"),
-                         plan_doc.get("script"))
-            state["story_recorded"] = True
-        # 내레이션 회차는 최악값 대신 TTS 실측 후 재판정(아래) — DN2026_0116
-        if not narrated and prior + planned > run_cap + 1e-9:
+        # 내레이션 회차는 최악값 대신 TTS 실측 후 재판정(아래), TTS 전에는 최소값(전 컷 5초)으로 — DN2026_0116
+        floor_cost = round(len(plan) * cast_narration.CUT_MIN_SEC * price, 2) if narrated else planned
+        if prior + floor_cost > run_cap + 1e-9:
             raise generate.GenerationError(
-                f"cost_cap_run prior=${prior:.2f} planned=${planned:.2f} cap=${run_cap:.2f}")
+                f"cost_cap_run prior=${prior:.2f} planned=${floor_cost:.2f} cap=${run_cap:.2f}")
         # DN2026_0115: 내레이션 TTS — open_run 이후·첫 fal 제출 전. 실패 시 fal 0회로 종료.
         # TTS 비용은 fal cost 가드 대상 아님(OPEX 별도 등록).
         start = time.time()   # R6-05 #5: TTS 소요도 생성 시간 예산에 포함
@@ -231,6 +226,13 @@ def main() -> None:
                 raise generate.GenerationError(
                     f"cost_cap_month spent=${spent:.2f} planned=${planned:.2f} cap=${month_cap:.2f}")
             logger.info("cost_plan_fitted cuts=%s planned=$%.2f", list(cut_secs.values()), planned)
+            _write_ledger(state)
+        # DN2026_0115 (I-3) → DN2026_0116 R6-03: 스토리 상태는 TTS·실측 비용 판정 통과 후, 첫 fal 제출 직전에 기록
+        record_story = getattr(cast_ledger, "record_story", None)
+        if beats and callable(record_story):
+            record_story(run_id, plan_doc.get("villain"), plan_doc.get("story_state_next"),
+                         plan_doc.get("script"))
+            state["story_recorded"] = True
             _write_ledger(state)
         current = {"cost": 0.0}   # DN2026_0116: 제출 중인 컷의 추정 비용(컷별 길이)
 

@@ -106,19 +106,30 @@ def test_plan_only_counts_chars():
 
 
 def test_fit_cuts_rules():
-    """DN2026_0116 — 실측 길이 → 컷 길이(5~10, tempo ≤1.10), 합계 16 미만 보정, 58 초과 차단."""
-    assert N.fit_cuts([9.68]) == [{"cut_sec": 10, "tempo": 1.0298}] or N.fit_cuts([9.68])[0]["cut_sec"] == 10
+    """DN2026_0116 — 실측 길이 → 컷 길이(5~10, tempo ≤1.10), 합계 16 미만 보정, 합성 58 초과 차단."""
     f = N.fit_cuts([2.0, 2.0, 2.0])                    # 5+5+5=15 < 16 → 한 컷 +1
     assert sum(x["cut_sec"] for x in f) == 16
     f = N.fit_cuts([4.0, 7.2, 9.6])
     assert [x["cut_sec"] for x in f] == [5, 8, 10] and f[2]["tempo"] == round(9.6 / 9.4, 4)
     with pytest.raises(N.NarrationError, match="narration_total_too_long"):
-        N.fit_cuts([8.5] * 7)                            # 7 × 10 = 70 > 58
+        N.fit_cuts([8.9] * 7)                            # 7×(8.9/1.1+0.6)=60.8 > 58
     with pytest.raises(N.NarrationError, match=r"secs=\[1.00,11.00\]"):
         N.fit_cuts([1.0, 11.0])                          # 실패 시 전체 길이 기록
 
 
 def test_fit_cuts_shadow_measured_case():
-    """shadow run 44133047259 실측: 1번 30자 9.68초 → 10초 컷·tempo 1.0298(차단 아님)."""
-    f = N.fit_cuts([9.68])
-    assert f[0]["cut_sec"] == 10 and abs(f[0]["tempo"] - 9.68 / 9.4) < 1e-3
+    """shadow run 44133047259 실측 7비트(합 55.98초) — R4-03 재현에서 61초 차단되던 케이스가 통과."""
+    secs = [9.68, 7.4, 7.1, 7.4, 8.0, 8.4, 8.0]
+    f = N.fit_cuts(secs)
+    est = N._composed_total(secs, [x["tempo"] for x in f])
+    assert est <= N.TOTAL_MAX_SEC and all(1.0 <= x["tempo"] <= N.FIT_MAX_TEMPO for x in f)
+    assert all(5 <= x["cut_sec"] <= 10 for x in f)
+    for s_, x in zip(secs, f):                          # fal 클립(요청 초) ≥ compose 목표 길이
+        assert x["cut_sec"] >= s_ / x["tempo"] + N.CUT_TAIL_SEC - 1e-6
+
+
+def test_fit_cuts_max_script_caps_fit():
+    """대본 상한(30자+24자×6, 초당 3.1자) 최악값도 합성 58초 이내."""
+    secs = [30 / 3.1] + [24 / 3.1] * 6
+    f = N.fit_cuts(secs)
+    assert N._composed_total(secs, [x["tempo"] for x in f]) <= N.TOTAL_MAX_SEC

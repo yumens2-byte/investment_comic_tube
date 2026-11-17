@@ -90,35 +90,49 @@ def plan_only(beats: list[dict]) -> list[dict]:
              "chars": len(b["narration"])} for b in beats]
 
 
+def _composed_total(secs: list[float], tempos: list[float]) -> float:
+    """compose._narration_plan 과 같은 식의 합성 길이 추정: Σ max(min_cut, sec/tempo + 0.6)."""
+    min_cut = max(CUT_MIN_SEC, TOTAL_MIN_SEC / max(1, len(secs)))
+    return sum(max(min_cut, s / t + CUT_TAIL_SEC) for s, t in zip(secs, tempos))
+
+
 def fit_cuts(secs: list[float]) -> list[dict]:
     """DN2026_0116 — 내레이션 실측 길이 → 컷별 {cut_sec(정수), tempo}.
 
-    필요 길이 = sec + 0.6초. 10초 이내면 tempo 1.0·cut_sec=max(5, ceil(필요)).
-    넘치면 10초 컷에 tempo=sec/9.4 (1.10 초과는 오류). 합계 16초 미만이면 짧은 컷부터 1초씩 늘리고,
-    58초 초과면 오류(fal 호출 전). 오류 메시지에 전체 길이를 남긴다(R: 원인 추적).
+    1) 컷 tempo = max(1.0, sec/9.4) — 10초 컷에 들어가도록. 1.10 초과 비트는 오류.
+    2) 합성 길이(Σ max(min_cut, sec/tempo+0.6))가 58초를 넘으면 전 컷 공통 tempo(≤1.10)를
+       이분 탐색으로 올려 58초 이내로 맞춘다(R6-03 치명: 컷 올림 누적으로 61초 차단되던 문제).
+       1.10으로도 넘으면 오류(fal 호출 전).
+    3) fal 컷 길이 = max(5, ceil(sec/tempo+0.6)) ≤ 10. 합계 16초 미만이면 짧은 컷부터 1초씩 늘린다.
+    오류 메시지에 전 비트 실측 길이를 남긴다.
     """
     import math
-    fitted, over = [], []
-    for i, sec in enumerate(secs):
-        need = sec + CUT_TAIL_SEC
-        if need <= CUT_MAX_SEC:
-            fitted.append({"cut_sec": max(CUT_MIN_SEC, math.ceil(need)), "tempo": 1.0})
-            continue
-        tempo = round(sec / (CUT_MAX_SEC - CUT_TAIL_SEC), 4)
-        if tempo > FIT_MAX_TEMPO:
-            over.append(i)
-        fitted.append({"cut_sec": CUT_MAX_SEC, "tempo": tempo})
     summary = ",".join(f"{s:.2f}" for s in secs)
+    base = [max(1.0, s / (CUT_MAX_SEC - CUT_TAIL_SEC)) for s in secs]
+    over = [i for i, t in enumerate(base) if t > FIT_MAX_TEMPO + 1e-9]
     if over:
         raise NarrationError(f"narration_too_long beats={over} secs=[{summary}]")
+    floor = 1.0
+    if _composed_total(secs, base) > TOTAL_MAX_SEC:
+        if _composed_total(secs, [max(t, FIT_MAX_TEMPO) for t in base]) > TOTAL_MAX_SEC:
+            raise NarrationError(
+                f"narration_total_too_long est={_composed_total(secs, base):.2f}s secs=[{summary}]")
+        lo, hi = 1.0, FIT_MAX_TEMPO
+        for _ in range(40):
+            mid = (lo + hi) / 2
+            if _composed_total(secs, [max(t, mid) for t in base]) > TOTAL_MAX_SEC:
+                lo = mid
+            else:
+                hi = mid
+        floor = math.ceil(hi * 10000) / 10000
+    tempos = [round(max(t, floor), 4) for t in base]
+    fitted = [{"cut_sec": min(CUT_MAX_SEC, max(CUT_MIN_SEC, math.ceil(s / t + CUT_TAIL_SEC - 1e-9))),
+               "tempo": t} for s, t in zip(secs, tempos)]
     while sum(f["cut_sec"] for f in fitted) < TOTAL_MIN_SEC:
         short = min(range(len(fitted)), key=lambda k: fitted[k]["cut_sec"])
         if fitted[short]["cut_sec"] >= CUT_MAX_SEC:
             break
         fitted[short]["cut_sec"] += 1
-    total = sum(f["cut_sec"] for f in fitted)
-    if total > TOTAL_MAX_SEC:
-        raise NarrationError(f"narration_total_too_long total={total}s secs=[{summary}]")
     return fitted
 
 

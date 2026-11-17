@@ -474,7 +474,7 @@ def test_script_shadow_flow_tts_then_v2_prompts(script_env, monkeypatch):
         return fake(request, out, **k)
     monkeypatch.setattr(G, "generate_cut", cut)
     gen_main.main()
-    assert order[:2] == ["story", "tts"] and order[2:] == ["fal"] * 3
+    assert order[:2] == ["tts", "story"] and order[2:] == ["fal"] * 3   # DN2026_0116: TTS 통과 후 기록
     assert stories[0] == ("777", "Debt Titan", {"ep": 2}, _script(3))
     assert all(p.startswith("Comic-book cinematic vertical shot.") for p in prompts)
     assert "flickering chaotic shadows" in prompts[0] and "Situation 2." in prompts[1]

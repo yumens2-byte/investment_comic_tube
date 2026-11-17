@@ -179,8 +179,8 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
                         if c in chars and chars[c].get("persona_kr"))
     forms = (chars.get(decision["villain"]) or {}).get("attack_forms_en") or {}
     ending = ENDING_SPECS.get(str(decision["ending_type"]).upper(), {})
-    payoff = {"hit": "지난 회 예고가 적중 — 1비트에 '예고대로'를 넣는다.",
-              "twist": "지난 회 예고가 빗나감 — 1비트에 '예상 밖'을 넣는다."}.get(
+    payoff = {"hit": "지난 회 예고가 적중 — 2번 비트에 '예고대로'를 넣는다.",   # DN2026_0116 R6-03
+              "twist": "지난 회 예고가 빗나감 — 2번 비트에 '예상 밖'을 넣는다."}.get(
         decision.get("omen_payoff") or "", "지난 회 예고 없음.")
     beats = "\n".join(f"- cut {c['cut']} {c['role']} (출연: {', '.join(c['characters'])}): "
                       f"{ROLE_PURPOSE.get(c['role'], '')}" for c in plan)
