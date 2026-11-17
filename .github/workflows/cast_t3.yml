@@ -108,19 +108,50 @@ jobs:
           # fal은 젠스파크 래퍼 URL 다운로드 불가(422) → REF는 AI Drive readable URL 경유 주입 (부록 E 확정)
           echo "MODE=$CAST_EXECUTION_MODE — dry_run: 호출 0회, shadow: 생성만, live: 전체"
           python -m src.cast.__main__generate
+      - name: Upload generation artifacts (컷 mp4·원장)
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: 'cast-cuts-${{ github.run_id }}'
+          path: artifacts_cast/
 
   publish:
     needs: generate
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     if: vars.CAST_EXECUTION_MODE == 'live'
     steps:
-      - name: YouTube 발행 (live 모드만)
-        run: echo "live 승격 후 구현 — shadow 3회차 리포트 + 마스터 승인 선행"
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with: { python-version: '3.12', cache: 'pip' }
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v5
+        with: { name: 'cast-plan-${{ github.run_id }}', path: artifacts_cast }
+      - uses: actions/download-artifact@v5
+        with: { name: 'cast-cuts-${{ github.run_id }}', path: artifacts_cast }
+      - name: 합성·발행 (live 모드만 — renderer 합성 재용 + YouTube 업로드)
+        env:
+          CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          export PYTHONPATH=$(pwd)
+          python -m src.cast.__main__publish
 
   report:
     needs: [plan, generate]
     if: always()
     runs-on: ubuntu-24.04
     steps:
-      - name: 결과 리포트
-        run: echo "plan/generate 결론을 텔레그램 리포트로 전송 — notify_watchdog.yml 등록 예정"
+      - name: 결과 리포트 (텔레그램)
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          CAST_RUN_CONCLUSION: ${{ contains(needs.generate.result, 'success') && 'generate 성공' || 'generate 실패' }}
+          CAST_RUN_TIER: ${{ needs.plan.result == 'success' && '기록은 plan artifact 참조' || '' }}
+        run: |
+          export PYTHONPATH=$(pwd)
+          python -m src.cast.report
