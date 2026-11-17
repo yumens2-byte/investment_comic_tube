@@ -41,3 +41,15 @@ def test_build_text_handles_missing_values():
     assert "미확정" in t and "success" in t
     t2 = rep.build_text("success", "T3", 4.20, 7)
     assert "T3" in t2 and "$4.20" in t2 and "7컷" in t2
+
+
+def test_send_report_swallows_http_error(monkeypatch):
+    """부록 Y — 토큰·chat 오류(HTTP 404/401)도 리포트 유실은 파이프라인을 막지 않는다."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "badtok")
+    monkeypatch.setenv("TELEGRAM_CHAT_ID", "badchat")
+
+    def fake_urlopen(req, timeout=30):
+        raise urllib.error.HTTPError(req.full_url, 404, "Not Found", None, None)
+
+    monkeypatch.setattr(rep.urllib.request, "urlopen", fake_urlopen)
+    assert rep.send_report("x") is False

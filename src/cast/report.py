@@ -28,8 +28,12 @@ def send_report(text: str) -> bool:
     }).encode()
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage", data=payload)
-    with urllib.request.urlopen(req, timeout=30) as r:
-        ok = r.status == 200
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            ok = r.status == 200
+    except urllib.error.HTTPError as e:   # 토큰 만료·chat_id 오류 등 — 리포트 유실이 파이프라인을 막지 않는다
+        logger.warning("report_send_failed status=%d reason=%s", e.code, e.reason)
+        return False
     logger.info("report_sent ok=%s", ok)
     return ok
 
