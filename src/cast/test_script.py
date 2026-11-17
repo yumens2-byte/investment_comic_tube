@@ -203,7 +203,8 @@ def test_forbidden_words_precise(text, bad):
 @pytest.mark.parametrize("text,bad", [
     ("매수 기회다", True), ("매도 신호가 켜졌다", True), ("매수세가 거세다", False), ("매도세가 꺾였다", False),
     ("던져라", True), ("던져", True), ("지금 팔아", True), ("지금 팔아!", True), ("공을 던져 맞혔다", False),
-    ("던져진 주사위", False), ("매수 대기", True), ("매수세에", False), ("담아라", True), ("사두세요", True), ("정리하라", True),
+    ("던져진 주사위", False), ("매수 대기", True), ("매수세에", False),
+    ("금리 부담", False), ("이자 부담.", False), ("오른팔", False), ("지금 팔아. 그리고 본다", True), ("담아라", True), ("사두세요", True), ("정리하라", True),
     ("원칙을 담아 맞선다", False), ("공포에 팔아 버린 개미들", False), ("사라진다", False),
     ("손절도 원칙이다", False), ("VIX 18.70% 상승", False)])
 def test_forbidden_r6_06(text, bad):

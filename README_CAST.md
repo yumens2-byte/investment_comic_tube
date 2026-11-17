@@ -101,4 +101,4 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 ## 테스트
 
-`PYTHONPATH=. python -m pytest -q src/cast/` — 269 passed (2026-11-18, 기준 e3745a2의 41에서 증가).
+`PYTHONPATH=. python -m pytest -q src/cast/` — 273 passed (2026-11-18, 기준 e3745a2의 41에서 증가).
