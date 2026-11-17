@@ -53,12 +53,25 @@ def build_hook(market_snapshot: dict | None) -> str:
     return f"이번 주 {HOOK_LABELS[key]} {change:+.2f}% — EDT 유니버스 히어로들이 움직였다."
 
 
+def script_hook_takeaway(plan_doc: dict) -> tuple[str | None, str | None]:
+    """DN2026_0115 — script 있으면 (beats[0].narration, RESOLVE 비트 narration). 없으면 None."""
+    script = plan_doc.get("script")
+    beats = script.get("beats") if isinstance(script, dict) else None
+    if not isinstance(beats, list) or not beats:
+        return None, None
+    hook = (beats[0].get("narration") or "").strip() or None
+    takeaway = next(((b.get("narration") or "").strip() for b in beats
+                     if b.get("role") == "RESOLVE" and (b.get("narration") or "").strip()), None)
+    return hook, takeaway
+
+
 def cast_episode_metadata(plan_doc: dict, episode_no: int, thumbnail: str | None) -> dict:
     """src.publisher.build_title/build_description 이 읽는 키로 메타데이터 구성.  # DN2026_0114"""
     tier = plan_doc.get("tier")
     if tier not in TIER_THEME:
         raise PublishBlocked(f"알 수 없는 tier={tier!r}")
     snapshot = plan_doc.get("market_snapshot") or {}
+    hook, takeaway = script_hook_takeaway(plan_doc)
     return {
         "theme": TIER_THEME[tier],
         "villain": plan_doc.get("villain") or DEFAULT_VILLAIN,
@@ -69,7 +82,8 @@ def cast_episode_metadata(plan_doc: dict, episode_no: int, thumbnail: str | None
         "tier": tier,
         "privacy": resolve_privacy(),
         "thumbnail_source": thumbnail,
-        "storyboard": [{"narration": build_hook(snapshot)}, {"narration": TAKEAWAY}],
+        # DN2026_0115: 대본 있으면 훅=첫 비트, takeaway=RESOLVE 비트(없으면 기존 문구)
+        "storyboard": [{"narration": hook or build_hook(snapshot)}, {"narration": takeaway or TAKEAWAY}],
     }
 
 

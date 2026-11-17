@@ -197,3 +197,74 @@ def test_real_build_title(tier, snapshot):
 def test_removed_legacy_api():
     assert not hasattr(pub, "has_published_today_line")
     assert not hasattr(pub, "_YOUTUBE_SERVICE_UNSET")
+
+
+# ── DN2026_0115 P2: 대본 기반 훅·takeaway, __main__publish 내레이션 연결 ─────────────
+SCRIPT = {"version": 1, "source": "t", "ending_type": "x", "beats": [
+    {"cut": 1, "role": "ESTABLISH_THREAT", "narration": "부채 거인이 도시를 짓눌렀다.", "situation_en": "a"},
+    {"cut": 2, "role": "RESOLVE", "narration": "원칙을 지킨 쪽이 버텼다.", "situation_en": "b"},
+    {"cut": 3, "role": "NEXT_OMEN", "narration": "다음 그림자가 다가온다.", "situation_en": "c"}]}
+
+
+def test_metadata_hook_takeaway_from_script():
+    m = cast_episode_metadata({**PLAN, "script": SCRIPT}, 2, None)
+    assert m["storyboard"][0]["narration"] == "부채 거인이 도시를 짓눌렀다."
+    assert m["storyboard"][1]["narration"] == "원칙을 지킨 쪽이 버텼다."
+    assert m["theme"] == "히어로 총출동"
+
+
+def test_metadata_script_without_resolve_falls_back_takeaway():
+    beats = [b for b in SCRIPT["beats"] if b["role"] != "RESOLVE"]
+    m = cast_episode_metadata({**PLAN, "script": {**SCRIPT, "beats": beats}}, 2, None)
+    assert m["storyboard"][0]["narration"] == "부채 거인이 도시를 짓눌렀다."
+    assert m["storyboard"][1]["narration"] == pub.TAKEAWAY
+
+
+def test_metadata_without_script_unchanged():
+    m = cast_episode_metadata(PLAN, 1, None)
+    assert m["storyboard"][1]["narration"] == pub.TAKEAWAY
+    assert m["storyboard"][0]["narration"].startswith("이번 주 나스닥")
+
+
+def _publish_main_env(monkeypatch, tmp_path, *, script, narration):
+    import importlib
+    import json
+    pm = importlib.import_module("src.cast.__main__publish")
+    monkeypatch.chdir(tmp_path)
+    art = tmp_path / "artifacts_cast"
+    art.mkdir()
+    plan = {**PLAN, "plan": PLAN["plan"][:3], "mode": "dry_run"}
+    if script:
+        plan["script"] = {**SCRIPT, "beats": list(reversed(SCRIPT["beats"]))}  # 순서 뒤섞여도 컷순 자막
+    results = []
+    for i in (1, 2, 3):
+        p = art / f"cut_{i:02d}.mp4"
+        p.write_bytes(b"\x00")
+        results.append({"cut": i, "path": str(p), "duration_sec": 6.0})
+    led = {"results": results}
+    if narration:
+        led["narration"] = [{"cut": i, "wav": "w", "sec": 3.0, "tempo": 1.0} for i in (1, 2, 3)]
+    (art / "cast_plan.json").write_text(json.dumps(plan, ensure_ascii=False))
+    (art / "generate_ledger.json").write_text(json.dumps(led))
+    monkeypatch.setenv("CAST_EXECUTION_MODE", "dry_run")
+    seen = {}
+
+    def fake_compose(cuts, villain, out, **kw):
+        seen.update(kw)
+        return {"path": out, "duration_sec": 18.0, "thumbnail": "t.png", "segments": []}
+    monkeypatch.setattr(pm, "compose", fake_compose)
+    pm.main()
+    return seen
+
+
+def test_publish_main_passes_narration_and_captions(monkeypatch, tmp_path):
+    seen = _publish_main_env(monkeypatch, tmp_path, script=True, narration=True)
+    assert [n["cut"] for n in seen["narration"]] == [1, 2, 3]
+    assert seen["captions"] == [b["narration"] for b in SCRIPT["beats"]]
+    assert seen["market_snapshot"] == PLAN["market_snapshot"]
+
+
+@pytest.mark.parametrize("script,narration", [(False, False), (True, False), (False, True)])
+def test_publish_main_legacy_compose(monkeypatch, tmp_path, script, narration):
+    seen = _publish_main_env(monkeypatch, tmp_path, script=script, narration=narration)
+    assert seen == {}

@@ -20,7 +20,11 @@ from datetime import datetime, timedelta, timezone
 
 from src.cast import VERSION, generate
 from src.cast import ledger as cast_ledger
-from src.cast.casting import HEROES
+from src.cast import narration as cast_narration  # DN2026_0115
+from src.cast.casting import (  # DN2026_0115 — 캐논 로더(읽기·import만)
+    HEROES,
+    _load_canon,
+)
 from src.cast.mode import resolve_mode
 from src.cast.refsheet import load_ref_urls, ref_url_for
 
@@ -86,11 +90,35 @@ def _image_url_for(cut: dict, refs: dict) -> str | None:
 def _error_code(e: Exception) -> str:
     """원장 error 컬럼 — 유형명(+가드 사유 코드). 외부 응답 본문·키는 남기지 않는다."""
     msg = str(e)
-    for code in ("cost_cap_run_runtime", "cost_cap_month_runtime", "cost_cap_month", "cost_cap_run",
+    for code in ("narration_failed", "script_mismatch", "cost_cap_run_runtime",  # DN2026_0115
+                 "cost_cap_month_runtime", "cost_cap_month", "cost_cap_run",
                  "time_budget", "duration_out_of_range"):
         if msg.startswith(code):
             return f"{type(e).__name__}:{code}"
     return type(e).__name__
+
+
+def _script_beats(plan_doc: dict, plan: list[dict]) -> list[dict] | None:
+    """DN2026_0115 — script 있으면 beats 순서·개수·cut 이 plan 과 같아야 한다(I-2). 없으면 None(하위호환)."""
+    script = plan_doc.get("script")
+    if not script:
+        return None
+    beats = script.get("beats") if isinstance(script, dict) else None
+    if not isinstance(beats, list) or len(beats) != len(plan):
+        raise generate.GenerationError(
+            f"script_mismatch beats={len(beats) if isinstance(beats, list) else None} plan={len(plan)}")
+    for cut, beat in zip(plan, beats):
+        if int(beat.get("cut", -1)) != int(cut["cut"]) or not beat.get("narration") \
+                or not beat.get("situation_en"):
+            raise generate.GenerationError(f"script_mismatch cut={cut['cut']}")
+    return beats
+
+
+def _cut_prompt(cut: dict, beat: dict | None, canon: dict | None, axis: str | None) -> str:
+    """DN2026_0115 — 대본 있으면 v2(캐논+공격형태+situation_en), 없으면 기존 상황값."""
+    if beat is None:
+        return generate.build_cut_prompt(CANON_PROMPT, cut["role"])
+    return generate.build_cut_prompt_v2(cut["characters"], beat["situation_en"], canon or {}, axis)
 
 
 def main() -> None:
@@ -127,13 +155,20 @@ def main() -> None:
                     len(plan), cut_sec, planned, run_cap, month_cap)
 
         refs = load_ref_urls()
-        if not paid:  # dry_run — 요청 조립만, DB·네트워크 0
+        beats = _script_beats(plan_doc, plan)                       # DN2026_0115
+        canon = _load_canon() if beats else None
+        axis = plan_doc.get("axis")
+        beat_of = {int(b["cut"]): b for b in beats} if beats else {}
+        if not paid:  # dry_run — 요청 조립만, DB·네트워크·TTS 0
+            if beats:   # DN2026_0115 — 내레이션 계획(문장·글자수)만
+                state["narration_plan"] = cast_narration.plan_only(beats)
             for cut in plan:
                 request = generate.build_fal_request(
-                    generate.build_cut_prompt(CANON_PROMPT, cut["role"]),
+                    _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis),
                     _image_url_for(cut, refs), cut_sec)
                 state["results"].append({"cut": cut["cut"], "mode": "dry_run",
-                                         "request_keys": sorted(request)})
+                                         "request_keys": sorted(request),
+                                         "prompt_chars": len(request["prompt"])})
                 _write_ledger(state)
             logger.info("generate_finished tier=%s mode=dry_run planned=$%.2f", tier, planned)
             return
@@ -150,9 +185,24 @@ def main() -> None:
         prior = float(cast_ledger.open_run(run_id, run_date_kst, tier, mode, market_snapshot) or 0.0)
         opened = True
         state["prior_cost_usd"] = prior
+        # DN2026_0115 (I-3): record_story 는 다른 구현자 몫 — 존재할 때만 호출, 실패는 fail-closed
+        record_story = getattr(cast_ledger, "record_story", None)
+        if beats and callable(record_story):
+            record_story(run_id, plan_doc.get("villain"), plan_doc.get("story_state_next"),
+                         plan_doc.get("script"))
+            state["story_recorded"] = True
         if prior + planned > run_cap + 1e-9:
             raise generate.GenerationError(
                 f"cost_cap_run prior=${prior:.2f} planned=${planned:.2f} cap=${run_cap:.2f}")
+        # DN2026_0115: 내레이션 TTS — open_run 이후·첫 fal 제출 전. 실패 시 fal 0회로 종료.
+        # TTS 비용은 fal cost 가드 대상 아님.
+        if beats:
+            try:
+                state["narration"] = cast_narration.synthesize(
+                    beats, os.path.join(ARTIFACT_DIR, "audio"), budget_sec=cut_sec)
+            except cast_narration.NarrationError as e:
+                raise generate.GenerationError(f"narration_failed {e}") from e
+            _write_ledger(state)
 
         def on_submit() -> None:  # 제출 직전 런타임 가드 + 원장 선기록 — DN2026_0114
             if prior + state["total_cost_usd"] + per_cut > run_cap + 1e-9:
@@ -169,7 +219,7 @@ def main() -> None:
         start = time.time()
         for idx, cut in enumerate(plan):
             request = generate.build_fal_request(
-                generate.build_cut_prompt(CANON_PROMPT, cut["role"]),
+                _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis),   # DN2026_0115
                 _image_url_for(cut, refs), cut_sec)
             now = time.time()
             remaining = start + budget - now
