@@ -59,6 +59,7 @@ jobs:
           CAST_EXECUTION_MODE: ${{ vars.CAST_EXECUTION_MODE || 'dry_run' }}
         run: |
           export PYTHONPATH=$(pwd)
+          mkdir -p artifacts_cast
           python - <<'PY'
           import json, logging
           from src.collector import fetch_market_data
