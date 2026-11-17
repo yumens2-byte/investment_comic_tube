@@ -167,3 +167,48 @@ def next_episode_no() -> int:
     except Exception as e:
         raise _wrap("next_episode_no", e) from e
     return int(n) + 1
+
+
+# ---------- DN2026_0115 P2 스토리 레이어 (migration 005: villain·story_state·script) ----------
+STORY_STATUSES = ("published",)  # DN2026_0115
+STORY_STATUSES_WITH_GENERATED = ("published", "generated")  # DN2026_0115 — shadow 연속성 관찰용
+
+
+def record_story(run_id: str, villain: str, story_state: dict, script: dict) -> None:
+    """cast_runs의 villain·story_state·script 갱신. 실패 시 CastLedgerUnavailable. # DN2026_0115"""
+    tbl = _table()
+    try:
+        tbl.update({"villain": villain, "story_state": story_state, "script": script,
+                    "updated_at": _now_iso()}).eq("run_id", run_id).execute()
+    except Exception as e:
+        raise _wrap("record_story", e) from e
+    logger.info("ledger_story run_id=%s villain=%s", run_id, villain)
+
+
+def fetch_last_story(include_generated: bool) -> dict | None:
+    """story_state가 있는 최신 1행(run_date_kst desc, created_at desc). 없으면 None. # DN2026_0115
+
+    include_generated=False → published만, True → published+generated(shadow 연속성).
+    DB 오류는 CastLedgerUnavailable(fail-closed — 연속성 추측 진행 금지).
+    """
+    statuses = STORY_STATUSES_WITH_GENERATED if include_generated else STORY_STATUSES
+    tbl = _table()
+    try:
+        res = (tbl.select("run_id,run_date_kst,villain,story_state,created_at")
+               .in_("status", list(statuses))
+               .not_.is_("story_state", "null")
+               .order("run_date_kst", desc=True)
+               .order("created_at", desc=True)
+               .limit(1).execute())
+        rows = res.data or []
+    except Exception as e:
+        raise _wrap("fetch_last_story", e) from e
+    if not rows:
+        logger.info("ledger_story_prev none include_generated=%s", include_generated)
+        return None
+    row = rows[0]
+    state = row.get("story_state") or {}
+    out = {"run_id": row.get("run_id"), "run_date_kst": str(row.get("run_date_kst") or "")[:10] or None,
+           "villain": row.get("villain") or state.get("villain"), "story_state": state}
+    logger.info("ledger_story_prev run_id=%s villain=%s", out["run_id"], out["villain"])
+    return out

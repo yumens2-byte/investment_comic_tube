@@ -16,6 +16,22 @@ class FakeQuery:
     def __init__(self, db, op, payload=None, **kw):
         self.db, self.op, self.payload, self.kw = db, op, payload, kw
         self.filters = []
+        self.orders, self._limit, self._negate = [], None, False  # DN2026_0115
+
+    @property
+    def not_(self):  # DN2026_0115 — postgrest .not_.is_(col, "null")
+        self._negate = True
+        return self
+
+    def is_(self, k, v):
+        assert v == "null"
+        neg, self._negate = self._negate, False
+        self.filters.append(lambda r: (r.get(k) is None) != neg)
+        return self
+
+    def order(self, k, desc=False):
+        self.orders.append((k, desc))
+        return self
 
     def eq(self, k, v):
         self.filters.append(lambda r: r.get(k) == v)
@@ -38,6 +54,7 @@ class FakeQuery:
         return self
 
     def limit(self, n):
+        self._limit = n
         return self
 
     def _match(self):
@@ -49,6 +66,10 @@ class FakeQuery:
             raise self.db.fail
         if self.op == "select":
             rows = self._match()
+            for k, desc in reversed(self.orders):  # DN2026_0115
+                rows = sorted(rows, key=lambda r: str(r.get(k) or ""), reverse=desc)
+            if self._limit is not None:
+                rows = rows[:self._limit]
             return Res([dict(r) for r in rows], len(rows) if self.kw.get("count") else None)
         if self.op == "update":
             for r in self._match():
@@ -317,3 +338,75 @@ def test_generate_pre_open_failures_never_touch_ledger(db, monkeypatch, tmp_path
     with pytest.raises((G.GenerationError, L.CastLedgerUnavailable), match=expect):
         gen_main.main()
     assert db.rows[0]["status"] == "published"
+
+
+# ---------- DN2026_0115 P2 스토리 레이어 ----------
+
+def test_record_story_updates_columns(db):
+    db.rows.append({"run_id": "r1", "status": "generating"})
+    L.record_story("r1", "Debt Titan", {"season_week": 2}, {"version": 1, "beats": []})
+    assert db.rows[0]["villain"] == "Debt Titan"
+    assert db.rows[0]["story_state"] == {"season_week": 2}
+    assert db.rows[0]["script"]["version"] == 1 and db.rows[0]["status"] == "generating"
+
+
+def test_record_story_fail_closed(db):
+    db.fail = RuntimeError("down")
+    with pytest.raises(L.CastLedgerUnavailable):
+        L.record_story("r1", "Debt Titan", {}, {})
+
+
+def _story_rows():
+    return [
+        {"run_id": "a", "run_date_kst": "2026-11-07", "created_at": "1", "status": "published",
+         "villain": "Debt Titan", "story_state": {"season_week": 1}},
+        {"run_id": "b", "run_date_kst": "2026-11-14", "created_at": "1", "status": "published",
+         "villain": None, "story_state": {"season_week": 2, "villain": "Debt Titan"}},
+        {"run_id": "c", "run_date_kst": "2026-11-21", "created_at": "1", "status": "generated",
+         "villain": "Debt Titan", "story_state": {"season_week": 3}},
+        {"run_id": "d", "run_date_kst": "2026-11-28", "created_at": "1", "status": "published",
+         "villain": "Debt Titan", "story_state": None},
+        {"run_id": "e", "run_date_kst": "2026-11-28", "created_at": "2", "status": "gen_failed",
+         "villain": "Debt Titan", "story_state": {"season_week": 9}},
+    ]
+
+
+def test_fetch_last_story_published_only(db):
+    db.rows.extend(_story_rows())
+    prev = L.fetch_last_story(include_generated=False)
+    assert prev == {"run_id": "b", "run_date_kst": "2026-11-14", "villain": "Debt Titan",
+                    "story_state": {"season_week": 2, "villain": "Debt Titan"}}
+
+
+def test_fetch_last_story_include_generated(db):
+    db.rows.extend(_story_rows())
+    prev = L.fetch_last_story(include_generated=True)
+    assert prev["run_id"] == "c" and prev["story_state"] == {"season_week": 3}
+
+
+def test_fetch_last_story_created_at_tiebreak(db):
+    db.rows.extend([
+        {"run_id": "x", "run_date_kst": "2026-11-21", "created_at": "1", "status": "published",
+         "villain": "Debt Titan", "story_state": {"n": 1}},
+        {"run_id": "y", "run_date_kst": "2026-11-21", "created_at": "2", "status": "published",
+         "villain": "Debt Titan", "story_state": {"n": 2}},
+    ])
+    assert L.fetch_last_story(include_generated=False)["run_id"] == "y"
+
+
+def test_fetch_last_story_none(db):
+    assert L.fetch_last_story(include_generated=True) is None
+
+
+def test_fetch_last_story_fail_closed(db):
+    db.fail = RuntimeError("down")
+    with pytest.raises(L.CastLedgerUnavailable):
+        L.fetch_last_story(include_generated=False)
+
+
+def test_fetch_last_story_client_unavailable(monkeypatch):
+    def boom():
+        raise L.CastLedgerUnavailable("no env")
+    monkeypatch.setattr(L, "_table", boom)
+    with pytest.raises(L.CastLedgerUnavailable):
+        L.fetch_last_story(include_generated=False)
