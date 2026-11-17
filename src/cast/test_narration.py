@@ -46,8 +46,8 @@ def test_synthesize_real_wav(tmp_path, monkeypatch):
     # DN2026_0116: 컷 길이 = max(5, ceil(sec+0.6)) → 2.0→5, 5.7→7, 6.2→7 (합 19 ≥ 16)
     assert [o["cut_sec"] for o in out] == [5, 7, 7] and all(o["tempo"] == 1.0 for o in out)
     assert calls[0]["model"] == "gemini-3.8-flash-tts" and calls[0]["voice"] == "Charon"
-    assert calls[0]["tones"] == ["빠르고 또렷한 속도의 긴박한 톤", "빠르고 또렷한 속도의 절박한 톤",
-                                 "빠르고 또렷한 속도의 차분한 톤"]
+    assert calls[0]["tones"] == ["빠르고 또렷하게 말하는 긴박한 톤", "빠르고 또렷하게 말하는 절박한 톤",
+                                 "빠르고 또렷하게 말하는 차분한 톤"]
     assert len(calls) == 1   # 재합성 대상 없음
 
 
@@ -100,7 +100,7 @@ def test_tone_mapping():
     assert N.tone_for("RESOLVE") == p + "차분한 톤"
     assert N.tone_for("NEXT_OMEN") == p + "낮고 불길한 톤"
     assert N.tone_for("AFTERMATH_CALM") == p + "자연스러운 톤" == N.tone_for(None)
-    assert N.tone_for("NEXT_OMEN", retry=True) == "아주 빠르고 또렷한 속도의 낮고 불길한 톤"
+    assert N.tone_for("NEXT_OMEN", retry=True) == "아주 빠르고 또렷하게 말하는 낮고 불길한 톤"
 
 
 def test_plan_only_counts_chars():
@@ -207,3 +207,20 @@ def test_slow_beat_retry_longer_keeps_original_then_blocks(tmp_path, monkeypatch
     with pytest.raises(N.NarrationError, match="narration_too_long beats=\\[1\\]"):
         N.synthesize(_beats(), str(tmp_path))
     assert len(calls) == 2
+
+
+
+@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
+def test_slow_beat_retry_failure_keeps_original(tmp_path, monkeypatch):
+    """R6-06 — 재합성 실패(경로 None·사유 있음)면 원본 유지 → fit_cuts 판정(10.8초는 1.149배로 통과)."""
+    calls = []
+    first = _seq_tts(calls, [[3.0, 10.8, 4.0]])
+
+    def fake(narrations, output_dir="x", tones=None, **k):
+        if calls:
+            calls.append({"n": list(narrations)})
+            return [None], "tts:quota_exhausted"
+        return first(narrations, output_dir=output_dir, tones=tones, **k)
+    monkeypatch.setattr(tts, "synthesize_narrations", fake)
+    out = N.synthesize(_beats(), str(tmp_path))
+    assert len(calls) == 2 and "/retry/" not in out[1]["wav"] and abs(out[1]["sec"] - 10.8) < 0.05

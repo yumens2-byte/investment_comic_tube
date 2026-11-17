@@ -49,8 +49,8 @@ class NarrationError(RuntimeError):
     """내레이션 합성·길이 검증 실패 — fal 제출 전에 중단한다."""
 
 
-PACE_PREFIX = "빠르고 또렷한 속도의 "          # DN2026_0116 D안: shadow 실측 초당 2.0~3.1자 → 전 비트 속도 지시
-RETRY_PACE_PREFIX = "아주 빠르고 또렷한 속도의 "  # DN2026_0116 D안: 과길이 비트 1회 재합성
+PACE_PREFIX = "빠르고 또렷하게 말하는 "          # DN2026_0116 D안: shadow 실측 초당 2.0~3.1자 → 전 비트 속도 지시
+RETRY_PACE_PREFIX = "아주 빠르고 또렷하게 말하는 "  # DN2026_0116 D안: 과길이 비트 1회 재합성
 DEFAULT_ROLE_TONE = "자연스러운 톤"
 RETRY_TEMPO = 1.10        # 10초 컷 기준 이 배율을 넘게 압축해야 하는 비트는 1회 재합성
 
@@ -197,11 +197,12 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     # 재합성이 실패하거나 더 길면 원본 유지(fail-open) → fit_cuts 가 최종 판정(fail-closed).
     slow = [i for i, s in enumerate(secs) if s / (CUT_MAX_SEC - CUT_TAIL_SEC) > RETRY_TEMPO]
     if slow:
+        logger.info("narration_retry_start cuts=%s", [beats[i]["cut"] for i in slow])
         rpaths, rreason = _tts_fn()([texts[i] for i in slow], output_dir=os.path.join(out_dir, "retry"),
                                     tones=[tone_for(beats[i].get("role"), retry=True) for i in slow],
                                     voice_name=voice, model_name=model)
         for k, i in enumerate(slow):
-            rp = rpaths[k] if rreason is None and k < len(rpaths) else None
+            rp = rpaths[k] if k < len(rpaths) else None   # R6-06: 부분 성공도 성공분은 사용
             if not rp:
                 logger.warning("narration_retry_failed cut=%s reason=%s", beats[i]["cut"], rreason)
                 continue
