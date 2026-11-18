@@ -373,3 +373,36 @@ class TestDn20260117PostUploadAndMasking(unittest.TestCase):
         _post_upload(MagicMock(), "VID12345", {"skip_thumbnail": "false", "skip_playlist": "false"})
         thumb.assert_called_once()
         playlist.assert_called_once()
+
+
+class TestDn20260118LogMask(unittest.TestCase):
+    """DN2026_0118 — 공용 마스킹 유틸과 적용 지점."""
+
+    def test_shared_util_matches_publisher_alias(self):
+        from src import log_mask, publisher
+        self.assertIs(publisher._mask_id, log_mask.mask_id)
+        self.assertEqual(log_mask.mask_id("ABCDEFGHIJK"), "ABC***")
+
+    def test_report_outcome_masks_video_id_field(self):
+        import importlib.util, os
+        spec = importlib.util.spec_from_file_location(
+            "rpo", os.path.join(os.path.dirname(__file__), "..", "scripts", "report_pipeline_outcome.py"))
+        rpo = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(rpo)
+        self.assertEqual(rpo.mask_id("ABCDEFGHIJK"), "ABC***")
+        with open(spec.origin, encoding="utf-8") as fh:
+            src = fh.read()
+        self.assertIn('key == "video_id"', src)
+
+    def test_drive_manager_logs_mask_episode_id(self):
+        from unittest.mock import patch
+        from src import drive_manager
+        client = MagicMock()
+        client.table.return_value.update.return_value.eq.return_value.select.return_value.execute.return_value.data = [
+            {"id": "ep-0058-3be38db3"}]
+        with patch.object(drive_manager, "get_client", return_value=client), \
+                self.assertLogs("src.drive_manager", level="INFO") as logs:
+            drive_manager.update_episode("ep-0058-3be38db3", status="published")
+        joined = "\n".join(logs.output)
+        self.assertNotIn("ep-0058-3be38db3", joined)
+        self.assertIn("ep-***", joined)

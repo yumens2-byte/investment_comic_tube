@@ -282,3 +282,12 @@ def test_cast_metadata_skips_thumbnail_and_playlist():
     """DN2026_0117 — CAST는 커스텀 썸네일·재생목록을 쓰지 않는다(회장 결정)."""
     m = cast_episode_metadata(PLAN, 1, "thumb.png")
     assert m["skip_thumbnail"] is True and m["skip_playlist"] is True
+
+
+def test_publish_result_artifact_masks_video_id():
+    """DN2026_0118 — 공개 artifact(publish_result.json)에는 영상 ID 앞 3자만."""
+    import inspect
+    from src.cast import __main__publish as MP
+    src = inspect.getsource(MP)
+    assert '"youtube_video_id": mask_id(video_id) if video_id else None' in src
+    assert '"youtube_video_id": mask_id(vid)' in src

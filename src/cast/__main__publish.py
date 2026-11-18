@@ -11,6 +11,7 @@ import os
 
 from src.cast.compose import compose
 from src.cast.publish import PublishBlocked, publish_cast
+from src.log_mask import mask_id  # DN2026_0118
 
 try:
     from src.cast import VERSION
@@ -71,14 +72,15 @@ def main() -> None:
     # DN2026_0114 (R6-02 #4): 업로드 직후·원장 mark 전에 video_id를 먼저 기록(mark 실패 시 대사 근거)
     video_id = publish_cast(composed["path"], plan_doc, mode, composed["thumbnail"],
                             on_uploaded=lambda vid: _write({**base, "status": "uploaded_unmarked",
-                                                           "youtube_video_id": vid}))
+                                                           "youtube_video_id": mask_id(vid)}))
 
     result = {
         "version": VERSION, "mode": mode, "run_id": plan_doc.get("run_id"),
         "video_path": composed["path"], "duration_sec": composed["duration_sec"],
         "thumbnail": composed["thumbnail"], "segments": composed.get("segments"),  # DN2026_0115
         "status": "published" if video_id else "skipped",
-        "youtube_video_id": video_id,
+        # DN2026_0118: artifact 는 공개 — 원문 ID는 원장(cast_runs)에만. mark 실패 시 대사는 YouTube Studio 제목·시각으로
+        "youtube_video_id": mask_id(video_id) if video_id else None,
     }
     _write(result)
     logger.info("[CAST] publish_result status=%s", result["status"])

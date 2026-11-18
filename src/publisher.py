@@ -12,19 +12,8 @@ from googleapiclient.http import MediaFileUpload
 logger = logging.getLogger(__name__)
 
 
-def _mask_id(value) -> str:
-    """DN2026_0117: 공개 Actions 로그용 식별자 마스킹 — 앞 3자 + ***."""
-    text = str(value or "")
-    return f"{text[:3]}***" if text else "-"
-
-
-def _redact(err, *ids) -> str:
-    """DN2026_0117: 예외 문자열(요청 URL 포함)에 든 영상·재생목록 ID를 마스킹."""
-    text = str(err)
-    # R6-07: 짧은 값은 다른 단어 일부와 겹칠 수 있어 제외, 긴 ID부터 치환
-    for v in sorted({str(i) for i in ids if i and len(str(i)) >= 6}, key=len, reverse=True):
-        text = text.replace(v, _mask_id(v))
-    return text
+# DN2026_0118: 공용 유틸 src.log_mask 로 이동(이름은 호환 유지)
+from src.log_mask import mask_id as _mask_id, redact as _redact  # noqa: E402
 
 # 토큰 발급 시 요청할 스코프. scripts/issue_youtube_token.py 가 사용한다.
 # playlistItems.insert 는 youtube.upload 로는 403 이 나므로 force-ssl 이 필요하다.

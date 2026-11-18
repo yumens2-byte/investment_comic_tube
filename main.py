@@ -1,6 +1,7 @@
 import logging
 import sys
 
+from src.log_mask import mask_id  # DN2026_0118
 from src.collector import fetch_market_data
 from src.content_quality import (
     MIN_PUBLISH_DURATION_SEC,
@@ -349,7 +350,8 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
     if degraded:
         logger.warning("pipeline_degraded reasons=%s", ";".join(degraded))
     logger.info(
-        "pipeline_finished video_id=%s status=%s", video_id or "not_uploaded", final_status
+        "pipeline_finished video_id=%s status=%s",
+        mask_id(video_id) if video_id else "not_uploaded", final_status,  # DN2026_0118
     )
     return 0
 
