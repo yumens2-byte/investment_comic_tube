@@ -302,3 +302,74 @@ class RefreshScopeRegressionTest(unittest.TestCase):
         from src.publisher import get_youtube_service
 
         self.assertIsNone(get_youtube_service())
+
+
+class TestDn20260117PostUploadAndMasking(unittest.TestCase):
+    """DN2026_0117 — skip 옵션(기본 False=일간 라인 불변)·로그 식별자 마스킹."""
+
+    @patch("src.publisher.add_to_playlist")
+    @patch("src.publisher.set_thumbnail")
+    def test_default_calls_thumbnail_and_playlist(self, thumb, playlist):
+        from src.publisher import _post_upload
+        _post_upload(MagicMock(), "VID12345", {"thumbnail_source": "t.png"})
+        thumb.assert_called_once()
+        playlist.assert_called_once()
+
+    @patch("src.publisher.add_to_playlist")
+    @patch("src.publisher.set_thumbnail")
+    def test_skip_flags_suppress_calls(self, thumb, playlist):
+        from src.publisher import _post_upload
+        with self.assertLogs("src.publisher", level="INFO") as logs:
+            _post_upload(MagicMock(), "VID12345", {"skip_thumbnail": True, "skip_playlist": True})
+        thumb.assert_not_called()
+        playlist.assert_not_called()
+        joined = "\n".join(logs.output)
+        self.assertIn("thumbnail_skipped video_id=VID***", joined)
+        self.assertNotIn("VID12345", joined)
+
+    def test_mask_and_redact(self):
+        from src.publisher import _mask_id, _redact
+        self.assertEqual(_mask_id("ABCDEFGHIJK"), "ABC***")
+        self.assertEqual(_mask_id(None), "-")
+        self.assertEqual(_redact("GET /thumbnails/set?videoId=ABCDEFGHIJK&alt=json", "ABCDEFGHIJK"),
+                         "GET /thumbnails/set?videoId=ABC***&alt=json")
+
+    @patch("src.publisher._prepare_thumbnail", return_value="/tmp/t.jpg")
+    @patch("src.publisher.MediaFileUpload")
+    def test_thumbnail_failure_log_masks_id_in_error(self, _media, _prep):
+        resp = MagicMock(status=403, reason="forbidden")
+        youtube = MagicMock()
+        youtube.thumbnails.return_value.set.return_value.execute.side_effect = HttpError(
+            resp, b'{"error": "x"}', uri="https://youtube.googleapis.com/upload/youtube/v3/thumbnails/set?videoId=ABCDEFGHIJK")
+        with self.assertLogs("src.publisher", level="WARNING") as logs:
+            self.assertFalse(set_thumbnail(youtube, "ABCDEFGHIJK", "x.png"))
+        joined = "\n".join(logs.output)
+        self.assertNotIn("ABCDEFGHIJK", joined)
+        self.assertIn("ABC***", joined)
+
+
+    def test_playlist_failure_log_masks_playlist_id(self):
+        resp = MagicMock(status=403, reason="forbidden")
+        youtube = MagicMock()
+        youtube.playlists.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "PLabcdef123456", "snippet": {"title": PLAYLIST_TITLE}}]}
+        youtube.playlistItems.return_value.insert.return_value.execute.side_effect = HttpError(
+            resp, b'{}', uri="https://x/playlistItems?playlistId=PLabcdef123456&videoId=ABCDEFGHIJK")
+        with self.assertLogs("src.publisher", level="WARNING") as logs:
+            self.assertIsNone(add_to_playlist(youtube, "ABCDEFGHIJK"))
+        joined = "\n".join(logs.output)
+        self.assertNotIn("PLabcdef123456", joined)
+        self.assertNotIn("ABCDEFGHIJK", joined)
+
+    def test_redact_ignores_short_and_prefers_longest(self):
+        from src.publisher import _redact
+        self.assertEqual(_redact("x a-b abc", "a"), "x a-b abc")
+        self.assertEqual(_redact("id=ABCDEFGHIJKLMN", "ABCDEFG", "ABCDEFGHIJKLMN"), "id=ABC***")
+
+    @patch("src.publisher.add_to_playlist")
+    @patch("src.publisher.set_thumbnail")
+    def test_string_false_does_not_skip(self, thumb, playlist):
+        from src.publisher import _post_upload
+        _post_upload(MagicMock(), "VID12345", {"skip_thumbnail": "false", "skip_playlist": "false"})
+        thumb.assert_called_once()
+        playlist.assert_called_once()
