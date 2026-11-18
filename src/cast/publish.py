@@ -82,6 +82,9 @@ def cast_episode_metadata(plan_doc: dict, episode_no: int, thumbnail: str | None
         "tier": tier,
         "privacy": resolve_privacy(),
         "thumbnail_source": thumbnail,
+        # DN2026_0117: 커스텀 썸네일(채널 휴대전화 인증 필요)·재생목록 미사용 — 회장 결정
+        "skip_thumbnail": True,
+        "skip_playlist": True,
         # DN2026_0115: 대본 있으면 훅=첫 비트, takeaway=RESOLVE 비트(없으면 기존 문구)
         "storyboard": [{"narration": hook or build_hook(snapshot)}, {"narration": takeaway or TAKEAWAY}],
     }

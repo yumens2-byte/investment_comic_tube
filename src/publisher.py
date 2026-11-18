@@ -11,6 +11,21 @@ from googleapiclient.http import MediaFileUpload
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_id(value) -> str:
+    """DN2026_0117: 공개 Actions 로그용 식별자 마스킹 — 앞 3자 + ***."""
+    text = str(value or "")
+    return f"{text[:3]}***" if text else "-"
+
+
+def _redact(err, *ids) -> str:
+    """DN2026_0117: 예외 문자열(요청 URL 포함)에 든 영상·재생목록 ID를 마스킹."""
+    text = str(err)
+    for v in ids:
+        if v:
+            text = text.replace(str(v), _mask_id(v))
+    return text
+
 # 토큰 발급 시 요청할 스코프. scripts/issue_youtube_token.py 가 사용한다.
 # playlistItems.insert 는 youtube.upload 로는 403 이 나므로 force-ssl 이 필요하다.
 #
@@ -337,14 +352,15 @@ def set_thumbnail(youtube, video_id: str, image_path: str) -> bool:
         logger.warning(
             "thumbnail_set_failed video_id=%s status=%s reason=%s "
             "(채널 인증 또는 OAuth 스코프 확인 필요)",
-            video_id, getattr(e, "status_code", "?"), e,
+            _mask_id(video_id), getattr(e, "status_code", "?"), _redact(e, video_id),
         )
         return False
     except Exception as e:  # noqa: BLE001
-        logger.warning("thumbnail_set_failed video_id=%s reason=%s: %s", video_id, type(e).__name__, e)
+        logger.warning("thumbnail_set_failed video_id=%s reason=%s: %s", _mask_id(video_id), type(e).__name__,
+                       _redact(e, video_id))
         return False
 
-    logger.info("thumbnail_set video_id=%s source=%s", video_id, image_path)
+    logger.info("thumbnail_set video_id=%s source=%s", _mask_id(video_id), image_path)
     return True
 
 
@@ -380,7 +396,7 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
                 },
             ).execute()
             playlist_id = created.get("id")
-            logger.info("playlist_created title=%s id=%s", title, playlist_id)
+            logger.info("playlist_created title=%s id=%s", title, _mask_id(playlist_id))
 
         from src.pipeline_control import current
         if current():
@@ -401,14 +417,15 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
         logger.warning(
             "playlist_add_failed video_id=%s reason=%s "
             "(youtube.force-ssl 스코프로 refresh token 재발급이 필요할 수 있음)",
-            video_id, e,
+            _mask_id(video_id), _redact(e, video_id),
         )
         return None
     except Exception as e:  # noqa: BLE001
-        logger.warning("playlist_add_failed video_id=%s reason=%s: %s", video_id, type(e).__name__, e)
+        logger.warning("playlist_add_failed video_id=%s reason=%s: %s", _mask_id(video_id), type(e).__name__,
+                       _redact(e, video_id))
         return None
 
-    logger.info("playlist_added video_id=%s playlist=%s id=%s", video_id, title, playlist_id)
+    logger.info("playlist_added video_id=%s playlist=%s id=%s", _mask_id(video_id), title, _mask_id(playlist_id))
     return playlist_id
 
 
@@ -457,8 +474,7 @@ def upload_to_youtube(video_path, metadata, *, youtube_service=_YOUTUBE_SERVICE_
                             "sha256": hashlib.sha256(Path(video_path).read_bytes()).hexdigest(),
                             "size": Path(video_path).stat().st_size})
         video_id = upload(youtube, video_path, body, control, metadata.get("episode_id"))
-        set_thumbnail(youtube, video_id, metadata.get("thumbnail_source") or "artifacts/images/scene_0.png")
-        add_to_playlist(youtube, video_id)
+        _post_upload(youtube, video_id, metadata)
         return video_id
 
     media = MediaFileUpload(video_path, mimetype="video/mp4", resumable=True, chunksize=1024*1024)
@@ -475,16 +491,28 @@ def upload_to_youtube(video_path, metadata, *, youtube_service=_YOUTUBE_SERVICE_
         raise
 
     video_id = response.get("id")
-    logger.info("youtube_upload_finished video_id=%s", video_id)
+    logger.info("youtube_upload_finished video_id=%s", _mask_id(video_id))  # DN2026_0117
 
     if not video_id:
         return None
 
-    # 썸네일: 영상 첫 장면(훅 클로즈업)을 사용한다. 실패해도 발행은 유지한다.
-    thumbnail_source = metadata.get("thumbnail_source") or "artifacts/images/scene_0.png"
-    set_thumbnail(youtube, video_id, thumbnail_source)
-
-    # 재생목록: 없으면 생성 후 추가. 실패해도 발행은 유지한다.
-    add_to_playlist(youtube, video_id)
-
+    _post_upload(youtube, video_id, metadata)
     return video_id
+
+
+def _post_upload(youtube, video_id, metadata: dict) -> None:
+    """업로드 후 썸네일·재생목록. 실패해도 발행은 유지한다.
+
+    DN2026_0117: metadata skip_thumbnail / skip_playlist 가 참이면 호출하지 않는다(기본 False — 일간 라인 불변).
+    CAST 는 둘 다 끈다(채널 휴대전화 인증 미완료로 썸네일 403, 재생목록 미사용 — 회장 결정).
+    """
+    if metadata.get("skip_thumbnail"):
+        logger.info("thumbnail_skipped video_id=%s", _mask_id(video_id))
+    else:
+        # 썸네일: 영상 첫 장면(훅 클로즈업)을 사용한다.
+        set_thumbnail(youtube, video_id, metadata.get("thumbnail_source") or "artifacts/images/scene_0.png")
+    if metadata.get("skip_playlist"):
+        logger.info("playlist_skipped video_id=%s", _mask_id(video_id))
+    else:
+        # 재생목록: 없으면 생성 후 추가.
+        add_to_playlist(youtube, video_id)

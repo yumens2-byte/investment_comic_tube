@@ -275,3 +275,10 @@ def test_publish_main_script_without_narration_blocked(monkeypatch, tmp_path):
     from src.cast.publish import PublishBlocked
     with pytest.raises(PublishBlocked, match="무내레이션"):
         _publish_main_env(monkeypatch, tmp_path, script=True, narration=False)
+
+
+
+def test_cast_metadata_skips_thumbnail_and_playlist():
+    """DN2026_0117 — CAST는 커스텀 썸네일·재생목록을 쓰지 않는다(회장 결정)."""
+    m = cast_episode_metadata(PLAN, 1, "thumb.png")
+    assert m["skip_thumbnail"] is True and m["skip_playlist"] is True
