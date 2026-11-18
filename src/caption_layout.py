@@ -12,6 +12,8 @@ from fontTools.ttLib import TTFont
 
 from src import caption_policy as policy
 
+VERSION = "1.1.0"  # DN2026_0113: 줄바꿈 여유 폭·측정 허용치 상수화
+
 
 class LayoutError(ValueError):
     pass
@@ -74,12 +76,17 @@ def _atoms(text, protected):
     return result
 
 
+def _wrap_width():
+    return policy.BOX["width"] - policy.WRAP_MARGIN
+
+
 def _wrap(atoms, font, max_lines):
+    limit = _wrap_width()
     widths = {}
     for start in range(len(atoms)):
         for end in range(start + 1, len(atoms) + 1):
             width = float(font.getlength(" ".join(atoms[start:end]))) + 2 * policy.BORDER
-            if width > policy.BOX["width"]:
+            if width > limit:
                 break
             widths[start, end] = width
 
@@ -95,7 +102,7 @@ def _wrap(atoms, font, max_lines):
                 break
             tail = solve(end, remaining - 1)
             if tail is not None:
-                score = (policy.BOX["width"] - widths[start, end]) ** 2 + tail[0]
+                score = (limit - widths[start, end]) ** 2 + tail[0]
                 choices.append((score, (end,) + tail[1]))
         return min(choices) if choices else None
 
@@ -132,6 +139,7 @@ def build_layout(text, protected=()):
             continue
         return {
             "schema_version": 1, "policy_version": policy.ADAPTIVE,
+            "layout_revision": policy.LAYOUT_REVISION, "wrap_width_px": _wrap_width(),
             "canonical_text_hash": sha256(text.encode()).hexdigest(),
             "font_sha256": digest, "font_face_index": 0, "font_size_px": size,
             "box": dict(policy.BOX), "lines": lines, "line_count": len(lines),
@@ -191,9 +199,10 @@ def verify_mask(text, layout, directory):
             bbox[2] > box["x"] + box["width"] or bbox[3] > box["y"] + box["height"]):
         raise LayoutError("caption_render_outside_box")
     predicted = max(layout["measured_widths_px"])
-    # Pillow advances and FFmpeg stroke rasterization differed by up to 5px
-    # in reviewed mixed/Korean fixtures. Geometry containment above is strict.
-    if abs((bbox[2] - bbox[0]) - predicted) > 8:
+    # DN2026_0113: Pillow BASIC(커닝 없음)과 FFmpeg HarfBuzz(커닝) 차이는 문장별로
+    # -17~+12px 까지 실측됐다(기존 8px 기준은 픽스처 몇 개로만 정한 값). 이 검사는 폰트·엔진
+    # 교체 같은 큰 이탈 감지용이며, 실제 안전 기준은 위의 박스 포함 검사다.
+    if abs((bbox[2] - bbox[0]) - predicted) > policy.MEASURE_TOLERANCE:
         raise LayoutError("caption_measurement_mismatch")
     (directory / f"{name}.png").write_bytes(result.stdout)
     return list(bbox)

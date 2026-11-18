@@ -26,12 +26,14 @@ from src.story import BEAT_IMAGE_SLOT, SLOT_SCENES
 from src.tts import synthesize_narrations
 from src.validation import (
     NoNewMarketSession,
+    UsMarketHoliday,
     ValidationError,
     validate_market_data,
     validate_new_market_session,
     validate_not_published_today,
     validate_render_environment,
     validate_storyboard,
+    validate_us_session_day,
 )
 
 from src.pipeline_control import protected, current, reserve, ControlError
@@ -182,8 +184,10 @@ def main(*, video_pilot: bool = False, track: str = "EDT") -> int:
 
         cached_script = False
         from src.script_checkpoint import stable_market, freeze_context
+        from src.caption_policy import LAYOUT_REVISION
+        # DN2026_0113: 배치 규칙이 바뀌면 같은 날 캐시 대본(구 배치 manifest)을 재사용하지 않는다
         script_inputs = {"schema_version": 2, "track": track, "market": stable_market(market_data),
-                         "caption_policy": policy_name()}
+                         "caption_policy": policy_name(), "caption_layout_revision": LAYOUT_REVISION}
         if current():
             # Even final-script cache hits must still bind to the preceding story.
             from src.director import fetch_latest_episode_state, fetch_recent_cliffhangers
@@ -384,14 +388,60 @@ def budget_video_pilot(track=None) -> int:
         return 1
 
 
+RUN_TODAY_VERSION = "1.0.0"  # DN2026_0113: 휴장 진입 스킵 + 예비 예약 실행 게이트
+
+
+def _primary_already_started(track: str) -> bool:
+    """DN2026_0113 D3: 오늘 이미 발행됐거나 production 슬롯이 생겼으면 예비 실행은 불필요하다.
+
+    예비 실행은 '본 예약이 아예 오지 않은 날'만 메운다. 실패 회차 재시도는 하지 않는다
+    (유료 생성 중복 방지). 슬롯은 claim 시 생성되므로 본 실행·수동 실행 흔적이 모두 잡힌다.
+    """
+    from src.drive_manager import has_published_today
+    from src.pipeline_control import Control, enabled
+
+    if has_published_today():
+        return True
+    if enabled():
+        return bool(Control("production", track).status().get("exists"))
+    return False
+
+
+def run_today() -> int:
+    """예약·full 진입점. 휴장/예비 판정은 운영 슬롯 claim·OAuth·유료 호출 이전에 한다."""
+    import os
+
+    configure_logging()
+    role = os.getenv("PIPELINE_SCHEDULE_ROLE", "primary")
+    logger.info("run_today_started version=%s session_gate=%s role=%s",
+                RUN_TODAY_VERSION, SESSION_GATE_VERSION, role)
+    try:
+        validate_us_session_day()
+    except UsMarketHoliday as e:
+        logger.info("pipeline_skipped_us_market_holiday reason=%s", e)
+        return 0
+    track = select_daily_hero()
+    if role == "backup":
+        try:
+            started = _primary_already_started(track)
+        except Exception as e:  # noqa: BLE001 -- 판정 불가면 중복 과금 위험이 있어 진행하지 않는다
+            logger.error("backup_gate_check_failed reason=%s", type(e).__name__)
+            return 1
+        if started:
+            logger.info("pipeline_skipped_backup_not_needed reason=primary_already_started track=%s", track)
+            return 0
+        logger.warning("backup_run_started reason=primary_schedule_missing track=%s", track)
+    return main(track=track)
+
+
 if __name__ == "__main__":
     modes = {"--video-pilot": lambda: budget_video_pilot("EDT"),
-             "--run-today": lambda: main(track=select_daily_hero()),
+             "--run-today": run_today,
              "--goc-video-pilot": lambda: budget_video_pilot("GOC"),
              "--daily-video-pilot": budget_video_pilot,
              "--production-video-pilot": lambda: main(video_pilot=True, track=select_daily_hero())}
     if not sys.argv[1:]:
-        raise SystemExit(main(track=select_daily_hero()))
+        raise SystemExit(run_today())
     if len(sys.argv) != 2 or sys.argv[1] not in modes:
         raise SystemExit("usage: python main.py [--run-today|--video-pilot|--goc-video-pilot|--daily-video-pilot|--production-video-pilot]")
     raise SystemExit(modes[sys.argv[1]]())
