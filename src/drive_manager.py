@@ -197,7 +197,8 @@ def record_step_start(episode_id: str, step: str, input_hash: str | None = None)
             }
         ).execute()
     except Exception as e:  # noqa: BLE001 - 관측 데이터 실패는 파이프라인을 막지 않음
-        logger.warning("step_run_start_failed step=%s reason=%s: %s", step, type(e).__name__, e)
+        logger.warning("step_run_start_failed step=%s reason=%s: %s", step, type(e).__name__,
+                       redact(e, episode_id, step_run_id))  # DN2026_0118 R6-08
         return None
     return step_run_id
 

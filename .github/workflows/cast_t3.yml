@@ -174,7 +174,7 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd)
           python -m src.cast.__main__publish
-      - name: Upload publish result (video_id 대사 근거 — mark 실패 시 수동 정정용)   # DN2026_0114 (R6-01 #13)
+      - name: Upload publish result (상태·video_id 앞 3자 — 원문은 YouTube Studio, DN2026_0118)   # DN2026_0114 (R6-01 #13)
         if: always()
         uses: actions/upload-artifact@v5
         with:

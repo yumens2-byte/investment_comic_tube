@@ -12,9 +12,11 @@ import os
 import re
 import sys
 
-VERSION = "1.3.0"  # DN2026_0113: 미장 휴일 진입 스킵·예비 예약 이벤트 (1.2.0 DN2026_0092)
+VERSION = "1.3.1"  # DN2026_0118: video_id 방어 마스킹 (1.3.0 DN2026_0113, 1.2.0 DN2026_0092)
 
 LINE = re.compile(r"^(?P<ts>\S+)\s+(?P<level>[A-Z]+)\s+(?P<logger>\S+)\s+(?P<event>[a-z_]+)(?P<rest>.*)$")
+
+
 def mask_id(value):
     """DN2026_0118: src.log_mask.mask_id 와 같은 규칙(스크립트 단독 실행이라 import 없이 복제)."""
     text = str(value or "")
@@ -80,7 +82,7 @@ def parse(lines):
         rest = match["rest"].split(" line=", 1)[0]
         fields = {}
         for key, value in FIELD.findall(rest):
-            if key == "video_id" and value != "not_uploaded" and not value.endswith("***"):
+            if key == "video_id" and value not in ("not_uploaded", "-") and not value.endswith("***"):
                 value = mask_id(value)   # DN2026_0118: 공개 annotation 방어(로그가 원문이어도 가림)
             fields.setdefault(key, value[:300])
         events.append({"ts": match["ts"], "event": match["event"], "fields": fields})

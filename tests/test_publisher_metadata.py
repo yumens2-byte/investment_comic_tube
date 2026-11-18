@@ -390,9 +390,11 @@ class TestDn20260118LogMask(unittest.TestCase):
         rpo = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(rpo)
         self.assertEqual(rpo.mask_id("ABCDEFGHIJK"), "ABC***")
-        with open(spec.origin, encoding="utf-8") as fh:
-            src = fh.read()
-        self.assertIn('key == "video_id"', src)
+        line = "2026-11-21T10:00:00 INFO __main__ pipeline_finished video_id={} status=published"
+        for raw, want in (("ABCDEFGHIJK", "ABC***"), ("not_uploaded", "not_uploaded"), ("ABC***", "ABC***"),
+                          ("-", "-")):
+            events = rpo.parse([line.format(raw)])
+            self.assertEqual(events[0]["fields"]["video_id"], want)
 
     def test_drive_manager_logs_mask_episode_id(self):
         from unittest.mock import patch
