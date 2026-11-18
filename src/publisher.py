@@ -21,9 +21,9 @@ def _mask_id(value) -> str:
 def _redact(err, *ids) -> str:
     """DN2026_0117: 예외 문자열(요청 URL 포함)에 든 영상·재생목록 ID를 마스킹."""
     text = str(err)
-    for v in ids:
-        if v:
-            text = text.replace(str(v), _mask_id(v))
+    # R6-07: 짧은 값은 다른 단어 일부와 겹칠 수 있어 제외, 긴 ID부터 치환
+    for v in sorted({str(i) for i in ids if i and len(str(i)) >= 6}, key=len, reverse=True):
+        text = text.replace(v, _mask_id(v))
     return text
 
 # 토큰 발급 시 요청할 스코프. scripts/issue_youtube_token.py 가 사용한다.
@@ -385,6 +385,7 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
     실패해도 발행은 유지한다. playlistItems.insert 는 youtube.force-ssl(또는 youtube)
     스코프를 요구하므로, upload 스코프만 있는 토큰이면 403 이 난다.
     """
+    playlist_id = None   # DN2026_0117 R6-07: 예외 로그 마스킹 대상
     try:
         playlist_id = _find_playlist(youtube, title)
         if not playlist_id:
@@ -417,12 +418,12 @@ def add_to_playlist(youtube, video_id: str, title: str = PLAYLIST_TITLE) -> str 
         logger.warning(
             "playlist_add_failed video_id=%s reason=%s "
             "(youtube.force-ssl 스코프로 refresh token 재발급이 필요할 수 있음)",
-            _mask_id(video_id), _redact(e, video_id),
+            _mask_id(video_id), _redact(e, video_id, playlist_id),
         )
         return None
     except Exception as e:  # noqa: BLE001
         logger.warning("playlist_add_failed video_id=%s reason=%s: %s", _mask_id(video_id), type(e).__name__,
-                       _redact(e, video_id))
+                       _redact(e, video_id, playlist_id))
         return None
 
     logger.info("playlist_added video_id=%s playlist=%s id=%s", _mask_id(video_id), title, _mask_id(playlist_id))
@@ -506,12 +507,12 @@ def _post_upload(youtube, video_id, metadata: dict) -> None:
     DN2026_0117: metadata skip_thumbnail / skip_playlist 가 참이면 호출하지 않는다(기본 False — 일간 라인 불변).
     CAST 는 둘 다 끈다(채널 휴대전화 인증 미완료로 썸네일 403, 재생목록 미사용 — 회장 결정).
     """
-    if metadata.get("skip_thumbnail"):
+    if metadata.get("skip_thumbnail") is True:
         logger.info("thumbnail_skipped video_id=%s", _mask_id(video_id))
     else:
         # 썸네일: 영상 첫 장면(훅 클로즈업)을 사용한다.
         set_thumbnail(youtube, video_id, metadata.get("thumbnail_source") or "artifacts/images/scene_0.png")
-    if metadata.get("skip_playlist"):
+    if metadata.get("skip_playlist") is True:
         logger.info("playlist_skipped video_id=%s", _mask_id(video_id))
     else:
         # 재생목록: 없으면 생성 후 추가.

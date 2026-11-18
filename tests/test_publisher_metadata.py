@@ -346,3 +346,30 @@ class TestDn20260117PostUploadAndMasking(unittest.TestCase):
         joined = "\n".join(logs.output)
         self.assertNotIn("ABCDEFGHIJK", joined)
         self.assertIn("ABC***", joined)
+
+
+    def test_playlist_failure_log_masks_playlist_id(self):
+        resp = MagicMock(status=403, reason="forbidden")
+        youtube = MagicMock()
+        youtube.playlists.return_value.list.return_value.execute.return_value = {
+            "items": [{"id": "PLabcdef123456", "snippet": {"title": PLAYLIST_TITLE}}]}
+        youtube.playlistItems.return_value.insert.return_value.execute.side_effect = HttpError(
+            resp, b'{}', uri="https://x/playlistItems?playlistId=PLabcdef123456&videoId=ABCDEFGHIJK")
+        with self.assertLogs("src.publisher", level="WARNING") as logs:
+            self.assertIsNone(add_to_playlist(youtube, "ABCDEFGHIJK"))
+        joined = "\n".join(logs.output)
+        self.assertNotIn("PLabcdef123456", joined)
+        self.assertNotIn("ABCDEFGHIJK", joined)
+
+    def test_redact_ignores_short_and_prefers_longest(self):
+        from src.publisher import _redact
+        self.assertEqual(_redact("x a-b abc", "a"), "x a-b abc")
+        self.assertEqual(_redact("id=ABCDEFGHIJKLMN", "ABCDEFG", "ABCDEFGHIJKLMN"), "id=ABC***")
+
+    @patch("src.publisher.add_to_playlist")
+    @patch("src.publisher.set_thumbnail")
+    def test_string_false_does_not_skip(self, thumb, playlist):
+        from src.publisher import _post_upload
+        _post_upload(MagicMock(), "VID12345", {"skip_thumbnail": "false", "skip_playlist": "false"})
+        thumb.assert_called_once()
+        playlist.assert_called_once()
