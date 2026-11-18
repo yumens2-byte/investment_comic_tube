@@ -331,12 +331,14 @@ def check_runtime_health(r: Report) -> None:
     video_id = latest.get("youtube_video_id")
     degraded = latest.get("degraded_reason")
 
+    from src.log_mask import mask_id  # DN2026_0118
+
     if status in ("published", "published_degraded") and video_id:
-        r.ok("runtime_latest", f"Ep.{ep} status={status} video_id={video_id}")
+        r.ok("runtime_latest", f"Ep.{ep} status={status} video_id={mask_id(video_id)}")  # DN2026_0118
     elif status == "failed":
         r.fail("runtime_latest", f"Ep.{ep} 파이프라인 실패 (degraded_reason={degraded})")
     else:
-        r.fail("runtime_latest", f"Ep.{ep} 발행 미완료 status={status} video_id={video_id}")
+        r.fail("runtime_latest", f"Ep.{ep} 발행 미완료 status={status} video_id={mask_id(video_id)}")
 
     if degraded:
         r.warn("runtime_quality", f"Ep.{ep} 품질 저하: {degraded}")

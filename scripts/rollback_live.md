@@ -29,8 +29,10 @@
 2. 발행물 판정: private 기본(발행 메타데이터 `privacy: private`) — 공개 전이면 **삭제하지 않고 유지**,
    `cast_runs`의 해당 행이 `uploading`(또는 `published`)으로 남아 같은 KST 날짜 재발행이 차단된다
    (업로드 중 예외·video_id 없음도 실재 불명이므로 `uploading` 유지 — DN2026_0114 fail-closed)
-3. video_id 대사: artifact `cast-publish-<run_id>`의 `publish_result.json`(status `uploaded_unmarked`면
-   업로드 성공·원장 미반영) 또는 YouTube Studio에서 실재 확인
+3. video_id 대사: artifact `cast-publish-<run_id>`의 `publish_result.json`은 status(`uploaded_unmarked`면
+   업로드 성공·원장 미반영)와 ID 앞 3자만 남긴다(DN2026_0118, 공개 레포·보관 7일).
+   **원문 video_id는 YouTube Studio**(업로드 시각·제목 `EDT 투자코믹 Ep.C<n>`)에서 확인한다.
+   artifact의 `abc***` 값을 원장에 넣지 않는다
 4. 원장 수동 정정 (확인 쿼리: `select run_id, run_date_kst, status, youtube_video_id, error, cost_usd
    from cast_runs order by created_at desc limit 5;`)
    - 업로드 실재: `update cast_runs set status='published', youtube_video_id='<id>', episode_no=<n>,

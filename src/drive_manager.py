@@ -14,6 +14,7 @@ import uuid
 from datetime import datetime, timezone
 
 from src.db_client import get_client
+from src.log_mask import mask_id, redact  # DN2026_0118
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,7 @@ def _reclaim_failed_episode(client, episode_no: int) -> None:
         if row.get("status") in PUBLISHED_STATUSES:
             # 발행된 번호와 충돌 -- 번호 산출 로직이 어긋난 것이므로 덮어쓰면 안 된다
             raise RuntimeError(
-                f"episode_no={episode_no} 는 이미 발행된 회차다(id={row.get('id')}). "
+                f"episode_no={episode_no} 는 이미 발행된 회차다(id={mask_id(row.get('id'))}). "
                 "번호 산출 로직 확인 필요."
             )
         old_id = row.get("id")
@@ -132,7 +133,7 @@ def _reclaim_failed_episode(client, episode_no: int) -> None:
         client.table("episodes").delete().eq("id", old_id).execute()
         logger.warning(
             "failed_episode_reclaimed episode_no=%s old_id=%s old_status=%s",
-            episode_no, old_id, row.get("status"),
+            episode_no, mask_id(old_id), row.get("status"),
         )
 
 
@@ -142,7 +143,7 @@ def start_episode(script_data: dict) -> str:
     episode_id = f"ep-{episode_no:04d}-{uuid.uuid4().hex[:8]}"
     now = _now_iso()
 
-    logger.info("episode_start_started episode_no=%s id=%s", episode_no, episode_id)
+    logger.info("episode_start_started episode_no=%s id=%s", episode_no, mask_id(episode_id))
     client = get_client()
     _reclaim_failed_episode(client, episode_no)
     client.table("episodes").insert(
@@ -159,7 +160,7 @@ def start_episode(script_data: dict) -> str:
             "updated_at": now,
         }
     ).execute()
-    logger.info("episode_start_finished id=%s", episode_id)
+    logger.info("episode_start_finished id=%s", mask_id(episode_id))
     return episode_id
 
 
@@ -170,13 +171,13 @@ def update_episode(episode_id: str, **fields) -> None:
     payload = dict(fields)
     payload["updated_at"] = _now_iso()
 
-    logger.info("episode_update_started id=%s fields=%s", episode_id, list(fields.keys()))
+    logger.info("episode_update_started id=%s fields=%s", mask_id(episode_id), list(fields.keys()))
     client = get_client()
     result = client.table("episodes").update(payload).eq("id", episode_id).select("id").execute()
     rows = result.data or []
     if len(rows) != 1 or rows[0].get("id") != episode_id:
-        raise EpisodeUpdateConflict(f"episode update affected {len(rows)} rows: {episode_id}")
-    logger.info("episode_update_finished id=%s status=%s", episode_id, fields.get("status"))
+        raise EpisodeUpdateConflict(f"episode update affected {len(rows)} rows: {mask_id(episode_id)}")
+    logger.info("episode_update_finished id=%s status=%s", mask_id(episode_id), fields.get("status"))
 
 
 def record_step_start(episode_id: str, step: str, input_hash: str | None = None) -> str | None:
@@ -196,7 +197,8 @@ def record_step_start(episode_id: str, step: str, input_hash: str | None = None)
             }
         ).execute()
     except Exception as e:  # noqa: BLE001 - 관측 데이터 실패는 파이프라인을 막지 않음
-        logger.warning("step_run_start_failed step=%s reason=%s: %s", step, type(e).__name__, e)
+        logger.warning("step_run_start_failed step=%s reason=%s: %s", step, type(e).__name__,
+                       redact(e, episode_id, step_run_id))  # DN2026_0118 R6-08
         return None
     return step_run_id
 
@@ -215,7 +217,8 @@ def record_step_finish(step_run_id: str | None, status: str, error_code: str | N
             }
         ).eq("id", step_run_id).execute()
     except Exception as e:  # noqa: BLE001
-        logger.warning("step_run_finish_failed id=%s reason=%s: %s", step_run_id, type(e).__name__, e)
+        logger.warning("step_run_finish_failed id=%s reason=%s: %s", mask_id(step_run_id), type(e).__name__,
+                       redact(e, step_run_id))
 
 
 def has_published_today() -> bool:

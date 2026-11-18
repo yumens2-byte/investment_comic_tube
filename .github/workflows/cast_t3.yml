@@ -174,7 +174,7 @@ jobs:
         run: |
           export PYTHONPATH=$(pwd)
           python -m src.cast.__main__publish
-      - name: Upload publish result (video_id 대사 근거 — mark 실패 시 수동 정정용)   # DN2026_0114 (R6-01 #13)
+      - name: Upload publish result (상태·video_id 앞 3자 — 원문은 YouTube Studio, DN2026_0118)   # DN2026_0114 (R6-01 #13)
         if: always()
         uses: actions/upload-artifact@v5
         with:
@@ -182,6 +182,7 @@ jobs:
           overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
           path: artifacts_cast/publish_result.json
           if-no-files-found: ignore
+          retention-days: 7   # DN2026_0118: 공개 레포 artifact 보관 단축(영상 ID는 마스킹 기록)
 
   report:
     needs: [plan, generate, publish]
