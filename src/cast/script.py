@@ -407,7 +407,10 @@ def resolve_characters(item: dict | None, cut: dict) -> list[str]:
     raw = (item or {}).get("characters")
     if cut.get("role") == "TURN" or not isinstance(raw, list):
         return base
-    picked = list(dict.fromkeys(str(c).strip() for c in raw if str(c).strip()))
+    # DN2026_0123 shadow 45135210910: Gemini 가 코드 대신 영문 이름(Leverage Muscle Man)을 돌려줘 폴백 — 이름도 코드로
+    by_name = {v.lower(): k for k, v in SCREEN_NAME_EN.items()}
+    picked = list(dict.fromkeys(by_name.get(str(c).strip().lower(), str(c).strip())
+                                for c in raw if str(c).strip()))
     villains = [c for c in base if c not in HEROES]
     heroes_ok = confirmed_heroes()   # R6-12 (d): REF CONFIRMED 히어로만(cast_for_tier fail-closed 이후 변경이므로)
     ok = (1 <= len(picked) <= 2
@@ -499,7 +502,9 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
         results = _evaluate(_call(client, prompt), plan, snapshot, banned)
         bad = {c: r[1] for c, r in results.items() if r[1]}
         if bad:
-            logger.warning("script_violation attempt=1 cuts=%s", sorted(bad))
+            # DN2026_0123: 사유 코드(내부 상수, 본문 아님)를 남겨 위반 원인을 운영 로그로 추적
+            logger.warning("script_violation attempt=1 cuts=%s reasons=%s", sorted(bad),
+                           {c: str(r).split(":")[0] for c, r in sorted(bad.items())})
             repair = prompt + "\n[위반 수정 요청] " + "; ".join(f"cut {c}: {r}" for c, r in sorted(bad.items())) \
                 + " — 규칙을 지켜 전체 배열을 다시 출력하라."
             try:
@@ -528,6 +533,8 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
                           "situation_en": str(item["situation_en"]).strip(), "characters": chars})
         used.add(beats[-1]["narration"])
     if replaced:
-        logger.warning("script_template_replaced cuts=%s", replaced)
+        logger.warning("script_template_replaced cuts=%s reasons=%s", replaced,
+                       {c: str(results[c][1]).split(":")[0] for c in replaced if results[c][1]}
+                       | {c: "duplicate_line_after_merge" for c in replaced if not results[c][1]})
     return {"version": SCRIPT_VERSION, "source": "gemini+template" if replaced else "gemini",
             "ending_type": decision["ending_type"], "beats": beats}

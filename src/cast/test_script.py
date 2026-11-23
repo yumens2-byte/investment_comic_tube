@@ -386,3 +386,18 @@ def test_merge_duplicate_rechecked(client):
     s = C.build_script("T2", t2, SNAP, decision(), None, "live")
     lines = [b["narration"] for b in s["beats"]]
     assert lines.count("같은 문장이다") == 1 and len(set(lines)) == len(lines)
+
+
+def test_resolve_characters_accepts_english_names(t3):
+    """DN2026_0123 shadow: Gemini 가 'Leverage Muscle Man' 처럼 이름으로 돌려줘도 코드로 받는다."""
+    cut = t3[1]
+    assert C.resolve_characters({"characters": ["Leverage Muscle Man", "EDT"]}, cut) == ["LEV-01", "EDT"]
+    assert C.resolve_characters({"characters": ["Volatility Hydra", "Exposure Futures Girl"]},
+                                dict(t3[3], characters=["Volatility Hydra", "FG-01"])) == ["Volatility Hydra", "FG-01"]
+
+
+def test_violation_reasons_logged(client, t3, caplog):
+    client([good_beats(t3, c3="금리 5% 돌파한다"), good_beats(t3)])
+    with caplog.at_level("WARNING", logger="cast.script"):
+        C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert "reasons={3: 'unregistered_market_numeric_claim'}" in caplog.text
