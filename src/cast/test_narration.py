@@ -18,7 +18,7 @@ def _beats(n=3, roles=("ESTABLISH_THREAT", "CRISIS", "RESOLVE")):
 def _fake_tts(calls, secs=None, reason=None, none_at=None):
     def fake(narrations, output_dir="x", tones=None, voice_name=None, model_name=None, **_):
         calls.append({"n": list(narrations), "dir": output_dir, "tones": tones,
-                      "voice": voice_name, "model": model_name})
+                      "voice": voice_name, "model": model_name, "style_mode": _.get("style_mode")})
         paths = []
         for i, _line in enumerate(narrations):
             if none_at == i:
@@ -46,9 +46,10 @@ def test_synthesize_real_wav(tmp_path, monkeypatch):
     # DN2026_0116: 컷 길이 = max(5, ceil(sec+0.6)) → 2.0→5, 5.7→7, 6.2→7 (합 19 ≥ 16)
     assert [o["cut_sec"] for o in out] == [5, 7, 7] and all(o["tempo"] == 1.0 for o in out)
     assert calls[0]["model"] == "gemini-3.8-flash-tts" and calls[0]["voice"] == "Charon"
-    assert calls[0]["tones"] == ["빠르고 또렷하게 말하는 긴박한 톤", "빠르고 또렷하게 말하는 절박한 톤",
-                                 "빠르고 또렷하게 말하는 차분한 톤"]
-    assert len(calls) == 1   # 재합성 대상 없음
+    # DN2026_0119: 톤은 순수 스타일 문자열, 대본과 분리(speech_metadata)
+    assert calls[0]["tones"] == ["긴박한 톤", "절박한 톤", "차분한 톤"]
+    assert calls[0]["style_mode"] == "speech_metadata"
+    assert len(calls) == 1   # 재합성 없음
 
 
 def test_tempo_boundaries():
@@ -91,16 +92,15 @@ def test_none_path_raises(tmp_path, monkeypatch):
 
 
 def test_tone_mapping():
-    p = N.PACE_PREFIX
-    assert N.tone_for("ESTABLISH_THREAT") == p + "긴박한 톤"
-    assert N.tone_for("ESCALATE") == p + "점점 고조되는 톤"
-    assert N.tone_for("ENGAGE") == p + "단호한 톤"
-    assert N.tone_for("CRISIS") == p + "절박한 톤"
-    assert N.tone_for("TURN") == p + "반격하듯 힘찬 톤"
-    assert N.tone_for("RESOLVE") == p + "차분한 톤"
-    assert N.tone_for("NEXT_OMEN") == p + "낮고 불길한 톤"
-    assert N.tone_for("AFTERMATH_CALM") == p + "자연스러운 톤" == N.tone_for(None)
-    assert N.tone_for("NEXT_OMEN", retry=True) == "아주 빠르고 또렷하게 말하는 낮고 불길한 톤"
+    """DN2026_0119 — 속도 접두어 제거, 역할 톤만."""
+    assert N.tone_for("ESTABLISH_THREAT") == "긴박한 톤"
+    assert N.tone_for("ESCALATE") == "점점 고조되는 톤"
+    assert N.tone_for("ENGAGE") == "단호한 톤"
+    assert N.tone_for("CRISIS") == "절박한 톤"
+    assert N.tone_for("TURN") == "반격하듯 힘찬 톤"
+    assert N.tone_for("RESOLVE") == "차분한 톤"
+    assert N.tone_for("NEXT_OMEN") == "낮고 불길한 톤"
+    assert N.tone_for("AFTERMATH_CALM") == "자연스러운 톤" == N.tone_for(None)
 
 
 def test_plan_only_counts_chars():
@@ -171,56 +171,15 @@ def test_trim_silence_fail_open(tmp_path):
 
 
 
-def _seq_tts(calls, plan):
-    """호출 순서별 길이 계획 plan=[[secs...], [secs...]] 로 wav 생성."""
-    def fake(narrations, output_dir="x", tones=None, voice_name=None, model_name=None, **_):
-        import os
-        os.makedirs(output_dir, exist_ok=True)
-        secs = plan[len(calls)]
-        calls.append({"n": list(narrations), "dir": output_dir, "tones": tones})
-        paths = []
-        for i, d in enumerate(secs):
-            p = f"{output_dir}/narration_{i}.wav"
-            subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i",
-                            f"sine=frequency=330:duration={d}:sample_rate=24000", "-ac", "1", p],
-                           check=True, capture_output=True, timeout=60)
-            paths.append(p)
-        return paths, None
-    return fake
-
-
 @pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
-def test_slow_beat_retried_fast_and_replaced(tmp_path, monkeypatch):
-    """DN2026_0116 D안 — 11.88초 비트만 '아주 빠르게' 재합성, 짧아지면 교체 후 통과."""
+def test_slow_suspect_warning_no_retry(tmp_path, monkeypatch, capsys):
+    """DN2026_0119 — 대사만 기준 3자/초 미만 비트만 경고, 재합성 호출 없음."""
     calls = []
-    monkeypatch.setattr(tts, "synthesize_narrations", _seq_tts(calls, [[3.0, 11.88, 4.0], [8.5]]))
-    out = N.synthesize(_beats(), str(tmp_path))
-    assert len(calls) == 2 and calls[1]["n"] == [_beats()[1]["narration"]]
-    assert calls[1]["tones"][0].startswith(N.RETRY_PACE_PREFIX) and calls[1]["dir"].endswith("retry")
-    assert abs(out[1]["sec"] - 8.5) < 0.05 and "retry" in out[1]["wav"]
-
-
-@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
-def test_slow_beat_retry_longer_keeps_original_then_blocks(tmp_path, monkeypatch):
-    calls = []
-    monkeypatch.setattr(tts, "synthesize_narrations", _seq_tts(calls, [[3.0, 12.5, 4.0], [12.9]]))
-    with pytest.raises(N.NarrationError, match="narration_too_long beats=\\[1\\]"):
-        N.synthesize(_beats(), str(tmp_path))
-    assert len(calls) == 2
-
-
-
-@pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
-def test_slow_beat_retry_failure_keeps_original(tmp_path, monkeypatch):
-    """R6-06 — 재합성 실패(경로 None·사유 있음)면 원본 유지 → fit_cuts 판정(10.8초는 1.149배로 통과)."""
-    calls = []
-    first = _seq_tts(calls, [[3.0, 10.8, 4.0]])
-
-    def fake(narrations, output_dir="x", tones=None, **k):
-        if calls:
-            calls.append({"n": list(narrations)})
-            return [None], "tts:quota_exhausted"
-        return first(narrations, output_dir=output_dir, tones=tones, **k)
-    monkeypatch.setattr(tts, "synthesize_narrations", fake)
-    out = N.synthesize(_beats(), str(tmp_path))
-    assert len(calls) == 2 and "/retry/" not in out[1]["wav"] and abs(out[1]["sec"] - 10.8) < 0.05
+    beats = [{"cut": 1, "role": "ESTABLISH_THREAT", "narration": "가" * 15, "situation_en": "x"},   # 15자/3초=5cps
+             {"cut": 2, "role": "CRISIS", "narration": "나" * 18, "situation_en": "x"},             # 18자/9초=2cps
+             {"cut": 3, "role": "RESOLVE", "narration": "다" * 16, "situation_en": "x"}]            # 16자/4초=4cps
+    monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts(calls, secs=[3.0, 9.0, 4.0]))
+    out = N.synthesize(beats, str(tmp_path))
+    assert len(calls) == 1 and len(out) == 3
+    printed = capsys.readouterr().out
+    assert "narration_slow_suspect cuts=[2]" in printed

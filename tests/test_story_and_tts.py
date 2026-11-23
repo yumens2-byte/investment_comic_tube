@@ -195,3 +195,47 @@ class QuotaDetectionTest(unittest.TestCase):
 
         for message in ("connection reset", "500 internal error", "429 rate limit, retry"):
             self.assertFalse(is_quota_exhausted(RuntimeError(message)), message)
+
+
+class TestDn20260119StyleMode(unittest.TestCase):
+    """DN2026_0119 — style_mode=speech_metadata 는 대사만 text, 톤은 speech_metadata.style. 기본은 기존 프롬프트."""
+
+    def _run(self, **kw):
+        from unittest.mock import patch, MagicMock
+        import tempfile
+        from src import tts
+        captured = []
+
+        def fake_generate(client, kind, idx, **kwargs):
+            captured.append(kwargs["contents"])
+            raise RuntimeError("stop")   # 합성 결과는 불필요 — 요청 형식만 검증
+
+        with patch.dict("os.environ", {"GEMINI_API_KEY": "x"}), \
+                patch.object(tts, "guarded_generate", side_effect=fake_generate), \
+                patch("google.genai.Client", MagicMock()):
+            tts.synthesize_narrations(["대사 하나"], output_dir=tempfile.mkdtemp(), tones=["긴박한 톤"],
+                                      max_attempts=1, **kw)
+        return captured[0]
+
+    def test_default_prompt_unchanged(self):
+        contents = self._run()
+        self.assertEqual(contents, "다음 대사를 긴박한 톤으로 낭독해라. 낭독할 대사: 대사 하나")
+
+    def test_speech_metadata_separates_style(self):
+        contents = self._run(style_mode="speech_metadata")
+        part = contents[0].parts[0]
+        self.assertEqual(part.text, "대사 하나")
+        self.assertEqual(part.speech_metadata.style, "긴박한 톤")
+
+    def test_invalid_style_mode_rejected(self):
+        from src import tts
+        with self.assertRaises(ValueError):
+            tts.synthesize_narrations(["x"], style_mode="bogus")
+
+    def test_speech_metadata_serialized_by_sdk(self):
+        """SDK 직렬화에서 speechMetadata.style 로 전송되는지(네트워크 없음)."""
+        from google.genai import _common, models, types
+        part = types.Part(text="대사 하나", speech_metadata=types.SpeechMetadata(style="긴박한 톤"))
+        out = _common.convert_to_dict(models._Part_to_mldev(part))
+        self.assertEqual(out, {"text": "대사 하나", "speechMetadata": {"style": "긴박한 톤"}})
+

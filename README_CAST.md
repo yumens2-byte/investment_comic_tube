@@ -55,7 +55,7 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 - **TTS**(generate, `narration.py`): 내레이션 회차는 `CAST_CUT_SEC`를 쓰지 않고 TTS 실측으로 컷 길이를 정한다(DN2026_0116).
   - `src.tts.synthesize_narrations`로 합성한다. 모델은 `CAST_TTS_MODEL`(기본 gemini-3.8-flash-tts), 음성은 `TTS_VOICE`(기본 Charon)이다.
   - 첫 fal 제출 전에 실행한다. TTS wav의 앞뒤 무음(-45dB)을 잘라낸 뒤 길이를 잰다(실패 시 원본 길이).
-  - 모든 비트 톤 앞에 '빠르고 또렷하게 말하는'를 붙인다. 10초 컷에 1.10배 넘게 압축해야 하는 비트는 '아주 빠르고 또렷하게 말하는'로 1회 다시 합성하고, 더 짧아질 때만 교체한다(shadow 실측 초당 2.0~3.1자, 예고 비트가 가장 느림).
+  - DN2026_0119: TTS(gemini-3.8-flash-tts)는 보낸 글을 그대로 낭독하므로, 대사는 text·톤은 `speech_metadata.style`로 분리해 보낸다(src/tts.py `style_mode="speech_metadata"`, CAST 전용 — 일간 라인은 기존 방식). 0116의 속도 지시 접두어·과길이 재합성은 폐기(원인이 지시문 낭독이었음). 대사만 기준 3자/초 미만이면 `narration_slow_suspect` 경고.
   - 컷 길이 = max(5, ceil(내레이션/tempo + 0.6초)) ≤ 10. 10초를 넘는 비트는 최대 1.25배(atempo, 음높이 유지)로 압축한다(shadow 실측 초당 2.0~3.4자).
   - 1.25배를 넘는 문장은 차단한다. 합성 길이(Σ 내레이션/tempo + 0.6초)가 58초를 넘으면 전 컷 공통 tempo를 1.25배까지 올려 맞추고, 그래도 넘으면 fal 호출 없이 차단한다. 오류에는 전 비트 길이를 남긴다. 컷 합계 16초 미만이면 짧은 컷부터 1초씩 늘린다.
   - 스토리 상태(record_story)는 TTS·실측 비용 판정을 통과한 뒤, 첫 fal 제출 직전에 기록한다.
