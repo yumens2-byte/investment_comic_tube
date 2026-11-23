@@ -325,18 +325,32 @@ def _call(client, prompt: str) -> str:
     return getattr(resp, "text", None) or ""
 
 
+# DN2026_0123 진단 run 45139412545: LEV-01 페르소나의 '세 배'를 Gemini 가 대사로 옮겨
+# unregistered_market_numeric_claim(수량 주장) 위반 — 프롬프트에 넣을 때만 수량어를 '몇 배'로 바꾼다(캐논 데이터 무변경)
+_QUANTITY = re.compile(r"(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*배")
+
+
+def _persona_safe(text: str) -> str:
+    return _QUANTITY.sub("몇 배", text or "")
+
+
+def _limit_for(index: int) -> str:
+    return "토큰 포함 30자(주간 토큰이면 '이번 주' 포함 34자)" if index == 0 else "24자"
+
+
 def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
     chars = canon["characters"]
     cast = sorted({c for cut in plan for c in cut["characters"]})
-    persona = "\n".join(f"- {c}: {chars[c]['persona_kr']}" for c in cast
+    persona = "\n".join(f"- {c}: {_persona_safe(chars[c]['persona_kr'])}" for c in cast
                         if c in chars and chars[c].get("persona_kr"))
     forms = (chars.get(decision["villain"]) or {}).get("attack_forms_en") or {}
     ending = ENDING_SPECS.get(str(decision["ending_type"]).upper(), {})
     payoff = {"hit": "지난 회 예고가 적중 — 2번 비트에 '예고대로'를 넣는다.",   # DN2026_0116 R6-03
               "twist": "지난 회 예고가 빗나감 — 2번 비트에 '예상 밖'을 넣는다."}.get(
         decision.get("omen_payoff") or "", "지난 회 예고 없음.")
-    beats = "\n".join(f"- cut {c['cut']} {c['role']} (기본 출연: {', '.join(c['characters'])}): "
-                      f"{ROLE_PURPOSE.get(c['role'], '')}" for c in plan)
+    beats = "\n".join(f"- cut {c['cut']} {c['role']} (기본 출연: {', '.join(c['characters'])}, "
+                      f"narration 최대 {_limit_for(i)}): {ROLE_PURPOSE.get(c['role'], '')}"
+                      for i, c in enumerate(plan))
     unresolved = decision.get("prev_unresolved") or (((prev or {}).get("story_state") or {}).get("unresolved"))
     act = decision.get("act") or "INTRO"
     recap = decision.get("prev_recap") or {}
@@ -363,6 +377,7 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
         "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하, 주간 지표 토큰이면 '이번 주' 포함 34자 이하), "
         "나머지 비트는 숫자·토큰 없이 24자 이하(낭독 시간 제한). 복선 회수(예고대로/예상 밖)는 2번 비트에. "
         "투자 권유·수익 보장·매수/매도 지시 금지. "
+        "수량 표현(세 배·두 배 등)과 숫자(시즌·주차 번호 포함) 금지 — '크게', '몇 배'로 쓴다. "
         "지어낸 수치 금지."
         f"{market_facts.prompt_contract(snapshot)}{decision.get('weekly_note') or ''}\n"
         "[situation_en 규칙] 영어 40단어 이하, 1액션 1카메라무브. 캐릭터 외형 묘사 금지(고정 블록이 따로 붙음). "
@@ -452,7 +467,7 @@ def check_beat(item: dict | None, snapshot: dict, allow_token: bool = True,
         return "week_prefix_on_daily", None
     limit = (MAX_RESOLVED_WEEK_CHARS if week else MAX_RESOLVED_CHARS) if allow_token else MAX_PLAIN_CHARS
     if len(resolved) > limit:
-        return "narration_too_long", None
+        return f"narration_too_long:{len(resolved)}>{limit}자", None   # 수정 요청에 실제 길이 전달
     if FORBIDDEN.search(resolved):
         return "forbidden_phrase", None
     if not ALLOWED_CHARS.match(resolved):

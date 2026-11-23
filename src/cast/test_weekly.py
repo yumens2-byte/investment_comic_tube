@@ -141,7 +141,7 @@ def test_check_beat_week_prefix_rules():
     assert C.check_beat({"narration": "이번 주 {{FACT:SPX.change_pct}}, 공포가 깨어났다", "situation_en": sit},
                         v)[0] == "week_prefix_on_daily"
     long_daily = {"narration": "{{FACT:SPX.change_pct}}, 볼래틸리티히드라가 깨어났다", "situation_en": sit}
-    assert C.check_beat(long_daily, v)[0] == "narration_too_long"     # 일간은 30자 유지
+    assert C.check_beat(long_daily, v)[0].startswith("narration_too_long")     # 일간은 30자 유지
     assert C.check_beat({"narration": "이번 주 시장이 흔들렸다", "situation_en": sit}, v, allow_token=False)[0] is None
 
 
