@@ -1,6 +1,6 @@
 """CAST-LINE 비트별 한국어 내레이션 TTS — DN2026_0115 P2 미디어 레이어.
 
-- 합성은 src.tts.synthesize_narrations 재사용(무수정, import만). 반환 (paths, reason).
+- 합성은 src.tts.synthesize_narrations 재사용(DN2026_0119 style_mode 옵션 추가, 기본값은 일간 라인 불변). 반환 (paths, reason).
 - reason 이 None 이 아니거나 경로에 None 이 있으면 NarrationError(fail-closed, 부분 내레이션 발행 금지).
 - DN2026_0119: 대본은 text, 톤은 speech_metadata.style 로 분리 합성(지시문 낭독 방지) → 앞뒤 무음 제거
   → ffprobe 실측 → 낭독 속도 감시(지시문 낭독 의심 경고)
@@ -33,7 +33,7 @@ TOTAL_MIN_SEC = 16        # 합성 하한 15초 + 1초
 TOTAL_MAX_SEC = 58        # Shorts 60초 이내(합성 상한 60초 - 2초)
 PROBE_TIMEOUT_SEC = 30
 
-# DN2026_0115 — 역할별 낭독 톤(src.tts 가 "다음 대사를 {tone}으로 낭독해라" 로 감싼다)
+# DN2026_0115 — 역할별 낭독 톤. DN2026_0119: speech_metadata.style 로 대사와 분리 전달
 ROLE_TONE = {
     "ESTABLISH_THREAT": "긴박한 톤",
     "ESCALATE": "점점 고조되는 톤",

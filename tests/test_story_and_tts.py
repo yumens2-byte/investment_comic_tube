@@ -231,3 +231,11 @@ class TestDn20260119StyleMode(unittest.TestCase):
         from src import tts
         with self.assertRaises(ValueError):
             tts.synthesize_narrations(["x"], style_mode="bogus")
+
+    def test_speech_metadata_serialized_by_sdk(self):
+        """SDK 직렬화에서 speechMetadata.style 로 전송되는지(네트워크 없음)."""
+        from google.genai import _common, models, types
+        part = types.Part(text="대사 하나", speech_metadata=types.SpeechMetadata(style="긴박한 톤"))
+        out = _common.convert_to_dict(models._Part_to_mldev(part))
+        self.assertEqual(out, {"text": "대사 하나", "speechMetadata": {"style": "긴박한 톤"}})
+

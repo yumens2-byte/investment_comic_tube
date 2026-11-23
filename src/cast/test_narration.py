@@ -173,10 +173,13 @@ def test_trim_silence_fail_open(tmp_path):
 
 @pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
 def test_slow_suspect_warning_no_retry(tmp_path, monkeypatch, capsys):
-    """DN2026_0119 — 대사만 기준 3자/초 미만이면 경고만, 재합성 호출 없음."""
+    """DN2026_0119 — 대사만 기준 3자/초 미만 비트만 경고, 재합성 호출 없음."""
     calls = []
+    beats = [{"cut": 1, "role": "ESTABLISH_THREAT", "narration": "가" * 15, "situation_en": "x"},   # 15자/3초=5cps
+             {"cut": 2, "role": "CRISIS", "narration": "나" * 18, "situation_en": "x"},             # 18자/9초=2cps
+             {"cut": 3, "role": "RESOLVE", "narration": "다" * 16, "situation_en": "x"}]            # 16자/4초=4cps
     monkeypatch.setattr(tts, "synthesize_narrations", _fake_tts(calls, secs=[3.0, 9.0, 4.0]))
-    out = N.synthesize(_beats(), str(tmp_path))
+    out = N.synthesize(beats, str(tmp_path))
     assert len(calls) == 1 and len(out) == 3
-    assert "narration_slow_suspect" in capsys.readouterr().out
-
+    printed = capsys.readouterr().out
+    assert "narration_slow_suspect cuts=[2]" in printed
