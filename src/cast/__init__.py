@@ -6,6 +6,6 @@ REF 미확정 캐릭터 배정 컷은 생성 차단(fail-closed) — 텍스트 �
 from .tier import classify_tier
 from .casting import cast_for_tier
 
-VERSION = "1.3.7"  # DN2026_0120 (…→0118→0119→0120)
+VERSION = "1.3.7"  # DN2026_0122 (…→0118→0121→0122)
 
 __all__ = ["VERSION", "classify_tier", "cast_for_tier"]  # DN2026_0114

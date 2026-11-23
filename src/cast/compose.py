@@ -73,7 +73,7 @@ def _duration(info: dict) -> float:
         return 0.0
 
 
-# DN2026_0120: 영상 캐논 빌런은 전용 BGM이 없어 같은 축의 기존 곡을 쓴다(renderer 무수정, assets/bgm 실재)
+# DN2026_0122: 영상 캐논 빌런은 전용 BGM이 없어 같은 축의 기존 곡을 쓴다(renderer 무수정, assets/bgm 실재)
 BGM_AXIS_ALIAS = {"Volatility Hydra": "Chaos Reaper", "Algorithm Reaper": "Bull Brute"}
 
 
@@ -84,15 +84,15 @@ def _caption_filter(text: str, villain: str | None, market_snapshot: dict | None
     protected: list[str] = []
     try:
         from src.cast.script import (
-            CAST_VILLAIN_KR,  # DN2026_0120: 영상 캐논 빌런 한글명도 줄바꿈 보호
+            CAST_VILLAIN_KR,  # DN2026_0122: 영상 캐논 빌런 한글명도 줄바꿈 보호
         )
         from src.story import (
             caption_protected,  # (market_data, line, villain) -> list[str]
         )
         protected = list(caption_protected(market_snapshot or {}, text, villain))
-        kr = CAST_VILLAIN_KR.get(villain or "")
-        if kr and kr in text and kr not in protected:
-            protected.append(kr)
+        for kr in CAST_VILLAIN_KR.values():   # R6-12 제안: 이어받기 문장의 직전 빌런명 포함
+            if kr in text and kr not in protected:
+                protected.append(kr)
     except Exception as e:  # noqa: BLE001 - 보호 구절은 줄바꿈 보조, 실패 시 빈 목록
         logger.warning("[CAST] compose caption_protected_skipped err=%s", type(e).__name__)
     try:

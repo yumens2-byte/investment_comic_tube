@@ -43,7 +43,7 @@ class FakeClient:
 
 
 def good_beats(plan, **override):
-    # DN2026_0120 D6: situation_en 에 화면 캐릭터 이름 필수
+    # DN2026_0122 D6: situation_en 에 화면 캐릭터 이름 필수
     beats = [{"cut": c["cut"], "narration": f"{c['role']} 장면이 이어진다"[:20],
               "situation_en": f"{' and '.join(C.screen_names(c['characters']))} turn toward the storm, slow push in."}
              for c in plan]
@@ -93,7 +93,7 @@ FOCUS = ("EDT", "FG-01", "LEV-01")
 PAYOFF = (None, "hit", "twist")
 
 
-VILLAINS = ("Debt Titan", "Volatility Hydra", "Algorithm Reaper")   # DN2026_0120
+VILLAINS = ("Debt Titan", "Volatility Hydra", "Algorithm Reaper")   # DN2026_0122
 ACTS = ("INTRO", "RISE", "CLASH", "FINALE")
 RECAPS = (None, {"villain": "Debt Titan"}, {"villain": "Volatility Hydra"}, {"villain": "Algorithm Reaper"})
 
@@ -269,13 +269,13 @@ def test_token_only_in_first_beat_and_plain_limit(client, t3):
     assert reason == "token_not_allowed"
 
 
-# ---------- DN2026_0120 D5·D6 ----------
+# ---------- DN2026_0122 D5·D6 ----------
 
 def test_pools_avoid_banned_lines(t3):
     d = decision(act="RISE")
     first = C._template_script(t3, d, SNAP, C.load_cast_canon())
     lines = [b["narration"] for b in first["beats"]]
-    again = C._template_script(t3, decision(act="RISE", prev_lines=lines), SNAP, C.load_cast_canon())
+    again = C._template_script(t3, decision(act="RISE", prev_lines=[lines]), SNAP, C.load_cast_canon())
     plain = [(a["narration"], b["narration"]) for a, b in zip(first["beats"], again["beats"])
              if a["role"] not in ("ESTABLISH_THREAT", "NEXT_OMEN")]
     assert all(x != y for x, y in plain), plain
@@ -338,5 +338,51 @@ def test_gemini_characters_validated(client, t3):
 def test_payoff_escalate_respects_banned(t3):
     d = decision(omen_payoff="twist")
     first = C.template_line("ESCALATE", 1, d, SNAP, t3[1])
-    again = C.template_line("ESCALATE", 1, decision(omen_payoff="twist", prev_lines=[first]), SNAP, t3[1])
+    again = C.template_line("ESCALATE", 1, decision(omen_payoff="twist", prev_lines=[[first]]), SNAP, t3[1])
     assert first.startswith("예상 밖, ") and again.startswith("예상 밖, ") and first != again
+
+
+
+def test_every_pool_candidate_within_limits():
+    """R6-12 (f): 시드가 고른 1개가 아니라 풀의 모든 후보를 금지 목록을 늘려 가며 전수 검사(STD-PROC-07)."""
+    canon_villain = {"rates": "Debt Titan", "volatility": "Volatility Hydra", "momentum": "Algorithm Reaper"}
+    roles = ("ESCALATE", "ENGAGE", "CRISIS", "TURN", "RESOLVE", "REGROUP", "AFTERMATH_CALM", "NEXT_OMEN")
+    seen_total = 0
+    for tier in ("T1", "T2", "T3"):
+        for cut in cast_for_tier(tier):
+            if cut["role"] not in roles:
+                continue
+            combos = itertools.product(AXES, ACTS, FOCUS, PAYOFF, RECAPS, ENDINGS, ("canon", "gated"))
+            for axis, act, focus, payoff, recap, ending, vk in combos:
+                villain = canon_villain[axis] if vk == "canon" else "Debt Titan"
+                banned: list[str] = []
+                for _ in range(12):
+                    d = decision(axis=axis, act=act, hero_focus=focus, omen_payoff=payoff, prev_recap=recap,
+                                 villain=villain, ending_type=ending, prev_lines=[banned])
+                    line = C.template_line(cut["role"], 1, d, SNAP, cut)
+                    if line in banned:
+                        break
+                    banned.append(line)
+                    seen_total += 1
+                    assert len(line) <= C.MAX_PLAIN_CHARS, line
+                    assert market_facts.check_line(line) is None and not C.FORBIDDEN.search(line), line
+                    assert C.ALLOWED_CHARS.match(line), line
+    assert seen_total > 1000
+
+
+def test_resolve_characters_requires_confirmed_ref(monkeypatch, t3):
+    monkeypatch.setattr(C, "confirmed_heroes", lambda: {"EDT", "FG-01"})
+    cut = t3[1]
+    assert C.resolve_characters({"characters": ["LEV-01", "EDT"]}, cut) == cut["characters"]
+    assert C.resolve_characters({"characters": ["FG-01", "EDT"]}, cut) == ["FG-01", "EDT"]
+
+
+def test_merge_duplicate_rechecked(client):
+    """R6-12 (c): 1차 cut2 유효 + 2차 cut3 이 같은 문장이면 병합 후 템플릿 대체."""
+    t2 = cast_for_tier("T2")
+    first = json.loads(good_beats(t2, c2="같은 문장이다", c3="매수하세요"))
+    second = json.loads(good_beats(t2, c2="지금 바로 매수하세요", c3="같은 문장이다"))
+    client([json.dumps(first, ensure_ascii=False), json.dumps(second, ensure_ascii=False)])
+    s = C.build_script("T2", t2, SNAP, decision(), None, "live")
+    lines = [b["narration"] for b in s["beats"]]
+    assert lines.count("같은 문장이다") == 1 and len(set(lines)) == len(lines)

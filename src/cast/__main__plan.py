@@ -39,9 +39,9 @@ def build_plan(data: dict, mode: str, run_id: str, run_date_kst: str, tier_force
     decision = storyline.decide(data, prev, run_date_kst=run_date_kst)
     plan = cast_for_tier(tier, villain=decision["villain"])
     plan = storyline.apply_focus(plan, decision["hero_focus"])
-    plan = storyline.apply_omen(plan, decision["villain"], decision["omen_villain"])   # DN2026_0120 D1
+    plan = storyline.apply_omen(plan, decision["villain"], decision["omen_villain"])   # DN2026_0122 D1
     script = build_script(tier, plan, data, decision, prev, mode)
-    plan = storyline.apply_script_cast(plan, script)   # DN2026_0120 D6
+    plan = storyline.apply_script_cast(plan, script)   # DN2026_0122 D6
     story_state_next = storyline.next_state(decision, script)
     logger.info("[CAST] story villain=%s raw=%s axis=%s omen=%s focus=%s season=S%dW%d act=%s payoff=%s source=%s",
                 decision["villain"], decision["villain_raw"], decision["axis"], decision["omen_villain"],

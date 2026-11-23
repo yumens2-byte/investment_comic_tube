@@ -22,7 +22,7 @@ from .storyline import HEROES, load_cast_canon
 
 logger = logging.getLogger("cast.script")
 
-SCRIPT_VERSION = 3  # DN2026_0120: 비트별 characters(D6) 추가 / DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
+SCRIPT_VERSION = 3  # DN2026_0122: 비트별 characters(D6) 추가 / DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 # DN2026_0116: 실측 낭독 속도 초당 약 3.1자(shadow run 44133047259, 30자=9.68초) — 컷 최대 10초 기준
 MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후)
@@ -49,7 +49,7 @@ try:
 except Exception:  # noqa: BLE001  # pragma: no cover — hooks 부재 시 영문명
     VILLAIN_KR = {}
 
-# DN2026_0120 D2: 시즌 4막 가이드(막별 비트 목적)
+# DN2026_0122 D2: 시즌 4막 가이드(막별 비트 목적)
 ACT_GUIDE = {
     "INTRO": "도입 — 빌런이 처음 모습을 드러내고 EDT가 원칙으로 맞선다",
     "RISE": "고조 — 첫 대결에서 밀리고, 동료가 합류해 다시 준비한다",
@@ -69,19 +69,19 @@ ROLE_PURPOSE = {
     "REGROUP": "EDT가 원칙을 재점검하며 다음을 준비",
 }
 
-# ---------- DN2026_0120 D5: 템플릿 후보 풀(역할·막·화면 히어로별 4~6개) ----------
+# ---------- DN2026_0122 D5: 템플릿 후보 풀(역할·막·화면 히어로별 4~6개) ----------
 # 규칙: 숫자·토큰 없음, {v}=빌런 한글명(조사 포함 형태는 _subj), 인용형(“…”) 비트는 캐릭터 대사.
 # 길이는 test_script_pools 가 전 조합(빌런 3종 × 복선 접두)을 대입해 24자 이하를 검사한다.
-_ESCALATE_POOL = {
-    "rates": ["빚의 무게가 도시 전체로 번진다", "이자의 사슬이 거리를 조여 온다",
+_ESCALATE_POOL = {   # R6-12 (f): 복선 접두("예상 밖, " 6자) 포함 24자 → 본문 18자 이하
+    "rates": ["빚의 무게가 도시로 번진다", "이자의 사슬이 거리를 조인다",
               "무거워진 공기가 시장을 누른다", "버티던 빌딩들이 하나둘 기운다"],
     "volatility": ["흔들림이 시장 곳곳으로 번진다", "번개가 치고 전광판이 깜빡인다",
                    "공포가 거리마다 퍼져 나간다", "어디서 칠지 아무도 모른다"],
-    "momentum": ["과열된 질주가 거리를 휩쓴다", "멈추지 않는 속도에 도시가 달아오른다",
+    "momentum": ["과열된 질주가 거리를 휩쓴다", "멈추지 않는 속도에 도시가 끓는다",
                  "모두가 같은 방향으로 내달린다", "열기가 빌딩 숲을 삼킨다"],
 }
 _ESCALATE_HERO = {   # D6: 화면 히어로 시점(T3=LEV-01, T2=FG-01)
-    "LEV-01": ["“세 배로 오르면 세 배로 떨어진다”", "과신한 질주가 먼저 꺾인다",
+    "LEV-01": ["“크게 오르면 크게 떨어진다”", "과신한 질주가 먼저 꺾인다",
                "레버리지 전사가 경고를 외친다"],
     "FG-01": ["“노출부터 다시 재야 해”", "계산하던 손이 잠시 멈춘다",
               "위험 노출이 한계선에 닿는다"],
@@ -117,7 +117,7 @@ _TURN_POOL = {
     "FG-01": ["노출을 잰 동료와 EDT가 반격한다", "“헤지는 내가 맡을게”", "균형을 잡은 둘이 다시 일어선다",
               "“위험은 내가 재고, 넌 버텨”"],
     "LEV-01": ["과신을 버린 동료가 EDT 곁에 선다", "“이번엔 힘을 아껴 쓴다”", "속도를 줄인 둘이 반격한다",
-               "“세 배의 힘, 이번엔 조심히”"],
+               "“큰 힘일수록 조심히 쓴다”"],
 }
 _RESOLVE_POOL = {   # D2: 막별 결말 톤(고조=패배 인정, 결말=승리), 교훈 1개
     "rates": {"default": ["무게를 버티는 힘은 분산이다", "빚 앞에서는 분산이 방패다", "한곳에 몰지 않으면 버틴다"],
@@ -142,7 +142,7 @@ def _FINALE_OMEN(s: str) -> str:   # D2 시즌 마지막 회
 
 
 _PAYOFF = {"hit": "예고대로 ", "twist": "예상 밖, "}
-# DN2026_0120: 영상 캐논 빌런 한글명(Notion 캐논에 한글 표기 없음 — 일간 라인 표기 규칙(붙여쓰기 음역) 준용)
+# DN2026_0122: 영상 캐논 빌런 한글명(Notion 캐논에 한글 표기 없음 — 일간 라인 표기 규칙(붙여쓰기 음역) 준용)
 CAST_VILLAIN_KR = {"Volatility Hydra": "볼래틸리티히드라", "Algorithm Reaper": "알고리즘리퍼"}
 
 
@@ -179,7 +179,19 @@ def _pick(pool: list[str], decision: dict, role: str, banned: set[str]) -> str:
     for line in order:
         if line not in banned:
             return line
+    logger.info("template_pool_exhausted role=%s", role)   # R6-12 제안
     return order[0]
+
+
+def banned_lines(decision: dict) -> set[str]:
+    """R6-12 (b): prev_lines = [[직전 회], [2회 전]] (옛 형식 평면 목록도 허용) → 금지 문장 집합."""
+    out: set[str] = set()
+    for item in decision.get("prev_lines") or []:
+        if isinstance(item, list):
+            out.update(str(x) for x in item if x)
+        elif item:
+            out.add(str(item))
+    return out
 
 
 def _hero_on_screen(cut: dict | None) -> str | None:
@@ -190,11 +202,11 @@ def _hero_on_screen(cut: dict | None) -> str | None:
 
 
 def template_line(role: str, index: int, decision: dict, snapshot: dict, cut: dict | None = None) -> str:
-    """토큰 포함 원문(대입 전). index=0 이면 지표 사실 토큰을 넣는다. DN2026_0120 D2·D3·D5·D6."""
+    """토큰 포함 원문(대입 전). index=0 이면 지표 사실 토큰을 넣는다. DN2026_0122 D2·D3·D5·D6."""
     v = villain_kr(decision["villain"])
     axis = decision["axis"]
     act = decision.get("act") or "INTRO"
-    banned = set(decision.get("prev_lines") or [])
+    banned = banned_lines(decision)
     payoff = _PAYOFF.get(decision.get("omen_payoff") or "", "")
     token = fact_token(axis, snapshot) if index == 0 else None
     if role == "ESTABLISH_THREAT":
@@ -240,7 +252,7 @@ def _villain_in(cut: dict) -> bool:
     return any(c not in HEROES for c in cut.get("characters") or [])
 
 
-# DN2026_0120 D6: 화면 캐릭터를 situation_en 에 이름으로 명시(대사·화면 일치 검사 기준)
+# DN2026_0122 D6: 화면 캐릭터를 situation_en 에 이름으로 명시(대사·화면 일치 검사 기준)
 SCREEN_NAME_EN = {"EDT": "EDT", "FG-01": "Exposure Futures Girl", "LEV-01": "Leverage Muscle Man"}
 
 
@@ -320,7 +332,7 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
                  f"S{recap.get('season_no')}W{recap.get('season_week')}({recap.get('act')}) 빌런="
                  f"{villain_kr(recap.get('villain') or '')}, 전환='{recap.get('turn') or ''}', "
                  f"교훈='{recap.get('lesson') or ''}', 예고='{recap.get('omen') or ''}'")
-    banned = [ln for ln in (decision.get("prev_lines") or []) if ln]
+    banned = sorted(banned_lines(decision))
     hero_names = ", ".join(f"{k}={SCREEN_NAME_EN[k]}" for k in sorted(HEROES))
     return (
         f"너는 주간 투자 히어로 앙상블 쇼츠의 한국어 내레이션 작가다. 계층 {tier}, 비트 {len(plan)}개.\n"
@@ -371,16 +383,23 @@ def _parse(raw: str) -> dict[int, dict]:
     return out
 
 
+def confirmed_heroes() -> set[str]:
+    from .casting import REF_CONFIRMED_PREFIX, _canon_ref_status, _load_canon
+    canon = _load_canon()
+    return {h for h in HEROES if _canon_ref_status(canon, h).startswith(REF_CONFIRMED_PREFIX)}
+
+
 def resolve_characters(item: dict | None, cut: dict) -> list[str]:
-    """DN2026_0120 D6: 대본이 고른 화면 캐릭터. 규칙 위반·누락이면 기본 출연(cut)으로 되돌린다."""
+    """DN2026_0122 D6: 대본이 고른 화면 캐릭터. 규칙 위반·누락이면 기본 출연(cut)으로 되돌린다."""
     base = list(cut.get("characters") or [])
     raw = (item or {}).get("characters")
     if cut.get("role") == "TURN" or not isinstance(raw, list):
         return base
     picked = list(dict.fromkeys(str(c).strip() for c in raw if str(c).strip()))
     villains = [c for c in base if c not in HEROES]
+    heroes_ok = confirmed_heroes()   # R6-12 (d): REF CONFIRMED 히어로만(cast_for_tier fail-closed 이후 변경이므로)
     ok = (1 <= len(picked) <= 2
-          and all(c in HEROES or c in villains for c in picked)
+          and all(c in heroes_ok or c in villains for c in picked)
           and all(v in picked for v in villains))
     if not ok:
         logger.info("script_cast_fallback cut=%s picked=%s", cut.get("cut"), picked)
@@ -392,7 +411,7 @@ def check_beat(item: dict | None, snapshot: dict, allow_token: bool = True,
                banned: set[str] | None = None,
                characters: list[str] | None = None) -> tuple[str | None, str | None]:
     """(위반 사유 또는 None, 대입 완료 narration). allow_token=False 비트는 토큰 금지·24자(DN2026_0116).
-    DN2026_0120: banned(직전 2회 대사) 중복 → duplicate_line, characters 이름이 situation_en 에 없으면
+    DN2026_0122: banned(직전 2회 대사) 중복 → duplicate_line, characters 이름이 situation_en 에 없으면
     situation_missing_character."""
     if not item:
         return "missing_beat", None
@@ -456,7 +475,7 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
     try:
         client = _make_client(api_key)
         prompt = build_prompt(tier, plan, snapshot, decision, prev, canon)
-        banned = {ln for ln in (decision.get("prev_lines") or []) if ln}
+        banned = banned_lines(decision)
         results = _evaluate(_call(client, prompt), plan, snapshot, banned)
         bad = {c: r[1] for c, r in results.items() if r[1]}
         if bad:
@@ -476,14 +495,18 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
         return _template_script(plan, decision, snapshot, canon)
 
     beats, replaced = [], []
+    used: set[str] = set()
     for i, cut in enumerate(plan):
         item, reason, resolved, chars = results[cut["cut"]]
+        if not reason and resolved in used:   # R6-12 (c): 병합 후 회차 안 중복 재검사
+            reason = "duplicate_line_after_merge"
         if reason:
             replaced.append(cut["cut"])
             beats.append(_template_beat(cut, i, decision, snapshot, canon))
         else:
             beats.append({"cut": cut["cut"], "role": cut["role"], "narration": resolved,
                           "situation_en": str(item["situation_en"]).strip(), "characters": chars})
+        used.add(beats[-1]["narration"])
     if replaced:
         logger.warning("script_template_replaced cuts=%s", replaced)
     return {"version": SCRIPT_VERSION, "source": "gemini+template" if replaced else "gemini",
