@@ -2,8 +2,8 @@
 
 - 합성은 src.tts.synthesize_narrations 재사용(무수정, import만). 반환 (paths, reason).
 - reason 이 None 이 아니거나 경로에 None 이 있으면 NarrationError(fail-closed, 부분 내레이션 발행 금지).
-- DN2026_0116: 전 비트 '빠르고 또렷한 속도' 지시 → 앞뒤 무음 제거 → ffprobe 실측
-  → 10초 컷 기준 1.10배 넘게 압축해야 하는 비트만 '아주 빠르게' 1회 재합성(짧아질 때만 교체)
+- DN2026_0119: 대본은 text, 톤은 speech_metadata.style 로 분리 합성(지시문 낭독 방지) → 앞뒤 무음 제거
+  → ffprobe 실측 → 낭독 속도 감시(지시문 낭독 의심 경고)
   → fit_cuts(컷 5~10초, tempo ≤1.25, 합성 ≤58초) 위반이면 NarrationError(fal 호출 전).
   tempo_for 는 DN2026_0115 호환용(미사용).
 - 키·외부 응답 본문은 로그·예외 메시지에 남기지 않는다(reason 코드만).
@@ -49,15 +49,16 @@ class NarrationError(RuntimeError):
     """내레이션 합성·길이 검증 실패 — fal 제출 전에 중단한다."""
 
 
-PACE_PREFIX = "빠르고 또렷하게 말하는 "          # DN2026_0116 D안: shadow 실측 초당 2.0~3.1자 → 전 비트 속도 지시
-RETRY_PACE_PREFIX = "아주 빠르고 또렷하게 말하는 "  # DN2026_0116 D안: 과길이 비트 1회 재합성
 DEFAULT_ROLE_TONE = "자연스러운 톤"
-RETRY_TEMPO = 1.10        # 10초 컷 기준 이 배율을 넘게 압축해야 하는 비트는 1회 재합성
+# DN2026_0119: 0116 D안의 속도 지시 접두어·과길이 재합성은 폐기 — '느린 낭독'은 지시문이 함께 읽힌 결과였다
+#   (11-21 실측: 대사만 1.8~2.8자/초, 지시문 포함 4.7~6.6자/초). 톤은 speech_metadata.style 로 분리한다.
+SLOW_SUSPECT_CPS = 3.0    # 대사만 기준 초당 글자 수가 이보다 낮으면 지시문 낭독 의심 경고(차단 아님)
+TTS_STYLE_MODE = "speech_metadata"
 
 
-def tone_for(role: str | None, retry: bool = False) -> str:
-    """역할 → 낭독 지시(속도 + 톤). 미정의 역할은 자연스러운 톤. # DN2026_0115 → DN2026_0116"""
-    return (RETRY_PACE_PREFIX if retry else PACE_PREFIX) + ROLE_TONE.get(role or "", DEFAULT_ROLE_TONE)
+def tone_for(role: str | None) -> str:
+    """역할 → 낭독 스타일(speech_metadata.style). 미정의 역할은 자연스러운 톤. # DN2026_0115 → DN2026_0119"""
+    return ROLE_TONE.get(role or "", DEFAULT_ROLE_TONE)
 
 
 def tempo_for(sec: float, budget_sec: float) -> float:
@@ -180,10 +181,10 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     model = model or os.environ.get("CAST_TTS_MODEL") or DEFAULT_TTS_MODEL
     voice = voice or os.environ.get("TTS_VOICE") or DEFAULT_TTS_VOICE
     tones = [tone_for(b.get("role")) for b in beats]
-    logger.info("narration_start beats=%d model=%s voice=%s", len(beats), model, voice)
+    logger.info("narration_start beats=%d model=%s voice=%s style_mode=%s", len(beats), model, voice, TTS_STYLE_MODE)
 
     paths, reason = _tts_fn()(texts, output_dir=out_dir, tones=tones,
-                              voice_name=voice, model_name=model)
+                              voice_name=voice, model_name=model, style_mode=TTS_STYLE_MODE)
     if reason is not None or len(paths) != len(beats) or any(p is None for p in paths):
         ok = sum(1 for p in paths if p)
         raise NarrationError(f"tts_failed reason={reason} ok={ok}/{len(beats)}")
@@ -193,28 +194,12 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     secs = [_probe(wav) for wav in paths]
     for b, r, sec, text in zip(beats, raw, secs, texts):
         logger.info("narration_measured cut=%s raw=%.2f sec=%.2f chars=%d", b["cut"], r, sec, len(text))
-    # DN2026_0116 D안: 10초 컷에 RETRY_TEMPO 배 넘게 압축해야 하는 비트만 '아주 빠르게'로 1회 재합성.
-    # 재합성이 실패하거나 더 길면 원본 유지(fail-open) → fit_cuts 가 최종 판정(fail-closed).
-    slow = [i for i, s in enumerate(secs) if s / (CUT_MAX_SEC - CUT_TAIL_SEC) > RETRY_TEMPO]
-    if slow:
-        logger.info("narration_retry_start cuts=%s", [beats[i]["cut"] for i in slow])
-        rpaths, rreason = _tts_fn()([texts[i] for i in slow], output_dir=os.path.join(out_dir, "retry"),
-                                    tones=[tone_for(beats[i].get("role"), retry=True) for i in slow],
-                                    voice_name=voice, model_name=model)
-        for k, i in enumerate(slow):
-            rp = rpaths[k] if k < len(rpaths) else None   # R6-06: 부분 성공도 성공분은 사용
-            if not rp:
-                logger.warning("narration_retry_failed cut=%s reason=%s", beats[i]["cut"], rreason)
-                continue
-            try:
-                rp = trim_silence(rp)
-                rsec = _probe(rp)
-            except NarrationError:
-                logger.warning("narration_retry_probe_failed cut=%s", beats[i]["cut"])
-                continue
-            logger.info("narration_retry cut=%s before=%.2f after=%.2f", beats[i]["cut"], secs[i], rsec)
-            if rsec < secs[i]:
-                paths[i], secs[i] = rp, rsec
+    # DN2026_0119: 지시문 낭독 감시 — 대사만 기준 낭독 속도가 비정상적으로 느리면 경고(차단은 fit_cuts 판정에 맡김)
+    suspect = [b["cut"] for b, sec, text in zip(beats, secs, texts)
+               if sec > 0 and len(text.replace(" ", "")) / sec < SLOW_SUSPECT_CPS]
+    if suspect:
+        logger.warning("narration_slow_suspect cuts=%s threshold=%.1fcps (지시문 낭독 의심)", suspect, SLOW_SUSPECT_CPS)
+        print(f"::warning::narration_slow_suspect cuts={suspect} — 지시문 낭독 의심(DN2026_0119)")
     fitted = fit_cuts(secs)
     out: list[dict] = []
     for b, wav, sec, f in zip(beats, paths, secs, fitted):

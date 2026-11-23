@@ -61,12 +61,20 @@ def synthesize_narrations(
     voice_name: str | None = None,
     model_name: str | None = None,
     max_attempts: int | None = None,
+    style_mode: str = "prompt",
 ) -> tuple[list[str | None], str | None]:
     """내레이션 문장들을 음성 파일로 합성한다.
 
     반환: (문장별 wav 경로 목록(실패한 항목은 None), 폴백 사유)
     사유가 None 이면 전부 정상 합성된 것이다.
+
+    style_mode (DN2026_0119):
+      "prompt"          — 기존: 지시문+대사를 한 문장으로 보냄(일간 라인, 3.1 계열 — 기본값 불변)
+      "speech_metadata" — 대사만 text, 톤은 Part.speech_metadata.style 로 분리. gemini-3.8 TTS 는
+                          text 를 그대로 낭독하므로 지시문이 함께 읽힌다(CAST 11-21 실측) — CAST 전용
     """
+    if style_mode not in ("prompt", "speech_metadata"):
+        raise ValueError(f"style_mode={style_mode!r}")
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         logger.warning("tts_skipped reason=no_api_key")
@@ -103,16 +111,23 @@ def synthesize_narrations(
         from src.asset_store import restore, save
         asset_inputs = {"line": line, "tone": tones[idx] if tones and idx < len(tones) else None,
                         "voice": voice_name or TTS_VOICE, "model": model_name or TTS_MODEL}
+        if style_mode != "prompt":
+            asset_inputs["style_mode"] = style_mode   # DN2026_0119: 기본 경로 캐시 키는 불변
         asset_path = out_dir / f"narration_{idx}.wav"
         if restore("tts", idx, asset_inputs, asset_path):
             paths.append(str(asset_path))
             continue
         # 스타일 지시문이 그대로 낭독되지 않도록 낭독 구간을 명확히 분리한다
         tone = (tones[idx] if tones and idx < len(tones) and tones[idx] else DEFAULT_TONE)
-        prompt = (
-            f"다음 대사를 {tone}으로 낭독해라. "
-            f"낭독할 대사: {line}"
-        )
+        if style_mode == "speech_metadata":
+            # DN2026_0119: 대본(text)과 낭독 지시(style)를 분리 — 공식 speech_metadata 방식
+            prompt = [types.Content(role="user", parts=[types.Part(
+                text=line, speech_metadata=types.SpeechMetadata(style=tone))])]
+        else:
+            prompt = (
+                f"다음 대사를 {tone}으로 낭독해라. "
+                f"낭독할 대사: {line}"
+            )
         # 일시적 오류로 한 비트가 무음이 되면 영상 전체 품질이 떨어진다(Ep.4 사례).
         # 한도 소진이 아닌 실패는 1회 재시도한다.
         pcm = None
