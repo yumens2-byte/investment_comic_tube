@@ -73,16 +73,26 @@ def _duration(info: dict) -> float:
         return 0.0
 
 
+# DN2026_0120: 영상 캐논 빌런은 전용 BGM이 없어 같은 축의 기존 곡을 쓴다(renderer 무수정, assets/bgm 실재)
+BGM_AXIS_ALIAS = {"Volatility Hydra": "Chaos Reaper", "Algorithm Reaper": "Bull Brute"}
+
+
 def _caption_filter(text: str, villain: str | None, market_snapshot: dict | None,
                     caption_file: Path) -> str:
     """DN2026_0115 — src.caption_layout(무수정) 레이아웃 → drawtext 체인. LayoutError → ComposeError."""
     from src.caption_layout import LayoutError, build_layout, drawtext_filter
     protected: list[str] = []
     try:
+        from src.cast.script import (
+            CAST_VILLAIN_KR,  # DN2026_0120: 영상 캐논 빌런 한글명도 줄바꿈 보호
+        )
         from src.story import (
             caption_protected,  # (market_data, line, villain) -> list[str]
         )
         protected = list(caption_protected(market_snapshot or {}, text, villain))
+        kr = CAST_VILLAIN_KR.get(villain or "")
+        if kr and kr in text and kr not in protected:
+            protected.append(kr)
     except Exception as e:  # noqa: BLE001 - 보호 구절은 줄바꿈 보조, 실패 시 빈 목록
         logger.warning("[CAST] compose caption_protected_skipped err=%s", type(e).__name__)
     try:
@@ -180,7 +190,7 @@ def compose(cuts: list[dict], villain: str | None, out_path: str,
 
     # 3) BGM 믹스 — renderer._find_bgm 읽기 전용 재사용, 없으면 무음 트랙
     from src.renderer import _find_bgm
-    bgm = _find_bgm(villain)
+    bgm = _find_bgm(BGM_AXIS_ALIAS.get(villain or "", villain))
     if bgm:
         audio_in = ["-stream_loop", "-1", "-i", bgm]
     else:

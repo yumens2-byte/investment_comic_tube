@@ -78,7 +78,7 @@
     }
   },
   "_cast_video_canon": {
-    "dn": "DN2026_0115",
+    "dn": "DN2026_0115 → DN2026_0120",
     "status": "APPROVED_BY_JARVIS_DELEGATED",
     "approved": "2026-11-18 회장 위임('모든 승인은 자비스에게') — 자비스 승인. 원문 spec_kr_verbatim 번역본, 원문과 충돌 시 원문 우선",
     "rule": "영상 프롬프트 = 아래 prompt_en 고정 블록 + 비트 상황값(situation_en). 매 발행마다 새로 쓰지 않는다(규칙서 §3). 화면 텍스트·숫자·글자 금지 — 캐논의 x3/x4 표기는 글자 없이 형태로 표현한다.",
@@ -104,8 +104,36 @@
           "volatility": "splitting into flickering chaotic shadows, the skyline shaking violently",
           "momentum": "charging forward in a reckless frenzy, overheated lava bursting from its cracks"
         }
+      },
+      "Volatility Hydra": {
+        "prompt_en": "Volatility Hydra, a monster of crackling lightning energy with many writhing arms and serpent-like heads, electric discharges arcing from its body",
+        "attack_forms_en": {
+          "rates": "lashing the city with heavy chains of storm-charged lightning",
+          "volatility": "multiplying its heads and striking the skyline with chaotic lightning bolts",
+          "momentum": "surging forward in a frenzy of crackling arcs, overheating the streets"
+        },
+        "negative_en": "no text, no numbers, no letters, no chart labels"
+      },
+      "Algorithm Reaper": {
+        "prompt_en": "Algorithm Reaper, a digital cyber skeleton with a glowing circuit-pattern body and red data-scanning beams sweeping from its eyes",
+        "attack_forms_en": {
+          "rates": "draining the city's power grid with cold scanning beams",
+          "volatility": "glitching across the skyline and splitting into flickering copies",
+          "momentum": "accelerating through the towers at machine speed, overheating everything it touches"
+        },
+        "negative_en": "no text, no numbers, no letters, no binary digits, no code symbols"
       }
     },
-    "villain_gate": "캐논 prompt_en이 있는 빌런만 출연. 그 외(select_villain의 Chaos Reaper·Bull Brute)는 캐논 등재 전까지 Debt Titan + 해당 축 attack_form으로 대체(DN2026_0115 D3)."
+    "villain_gate": "시장 축별 캐논 빌런: rates=Debt Titan, volatility=Volatility Hydra, momentum=Algorithm Reaper (Notion 02_EDT_CHARACTER_CANON v2.18.1 CHAR_VILLAIN_001·004·005, 회장 결정 '노션이 최종' 2026-11-23, DN2026_0120). characters 에 없는 빌런은 Debt Titan + 해당 축 attack_form 으로 대체."
+  },
+  "Volatility Hydra": {
+    "id": "CHAR_VILLAIN_004",
+    "spec_kr_verbatim": "번개 에너지 괴물, 여러 팔/돌출부, VIX 차트 급등 배경, 전기 방전",
+    "source": "Notion 02_EDT_CHARACTER_CANON v2.18.1 (DN2026_0120)"
+  },
+  "Algorithm Reaper": {
+    "id": "CHAR_VILLAIN_005",
+    "spec_kr_verbatim": "디지털/사이버 스켈레톤, 회로 패턴 몸통, 적색 데이터 스캔 빔, 0/1 코드 배경",
+    "source": "Notion 02_EDT_CHARACTER_CANON v2.18.1 (DN2026_0120)"
   }
 }

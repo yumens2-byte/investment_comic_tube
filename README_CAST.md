@@ -42,7 +42,10 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 - **스토리 결정**(plan):
   - `storyline.decide`가 `market_regime.select_villain`의 3축 점수로 이번 주 축과 빌런을 정한다.
-  - 캐논에 등재된 빌런만 등장한다. 지금은 Debt Titan뿐이라, 다른 축이 선택되면 Debt Titan이 그 축의 공격 형태로 나온다.
+  - 화면 빌런은 축별 Notion 캐논 빌런이다(DN2026_0120): 금리=Debt Titan, 변동성=Volatility Hydra, 과열=Algorithm Reaper. 회전·스트릭은 market_regime 원 빌런(villain_raw) 기준이다. 영상 캐논에 없는 빌런은 Debt Titan이 그 축의 공격 형태로 대체한다.
+  - 시즌 4막(DN2026_0120): 1주 도입 → 2주 고조(밀림·동료 합류) → 3주 결전 → 4주 결말(엔딩은 다음 시즌 예고로 고정).
+  - 이어받기(DN2026_0120): story_state에 recap(막·빌런·전환·교훈·예고)과 직전 2회 대사(lines)를 저장해 다음 대본에 넘긴다. 대사는 역할·막별 후보 풀에서 고르고, 직전 2회와 같은 문장은 금지한다.
+  - 배역(DN2026_0120): 대본이 비트별 화면 캐릭터(1~2명)를 고르고, situation_en에 그 이름이 없으면 위반으로 처리한다. NEXT_OMEN 컷에는 다음 회 예고 빌런이 나온다.
   - 2순위 축은 다음 주 예고(omen)로 쓴다. 다음 회차는 예고가 맞았는지(hit) 빗나갔는지(twist)를 회수한다.
   - TURN 비트 주역은 축으로 정한다. 금리는 EDT, 변동성은 FG-01, 과열은 LEV-01이다.
   - 시즌은 4주, 같은 빌런은 최대 3주 연속이다.

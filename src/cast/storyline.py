@@ -4,6 +4,8 @@
 - 빌런 선정은 src.market_regime.select_villain 단일 출처(편집 금지, import만).
 - villain_gate: 캐논 _cast_video_canon.characters 에 등재된 빌런만 출연. 그 외는 Debt Titan
   + 해당 축 attack_form 으로 대체(DN2026_0115 D3). 축(axis)은 원 빌런 기준으로 유지한다.
+- DN2026_0120 D1: 화면 빌런은 축별 Notion 캐논 빌런(CANON_VILLAIN). 회전·스트릭은 villain_raw 기준 유지.
+- DN2026_0120 D2·D3: 시즌 4막(act) + 직전 회차 요약(recap)을 story_state(jsonb 내부 키)에 저장.
 - 외부 호출 없음(순수 함수). 이전 회차 상태(prev)는 호출부가 ledger.fetch_last_story로 넘긴다.
 """
 from __future__ import annotations
@@ -30,6 +32,10 @@ AXIS = {  # DN2026_0115
     VILLAIN_BULL_BRUTE: "momentum",
 }
 HERO_FOCUS = {"rates": "EDT", "volatility": "FG-01", "momentum": "LEV-01"}
+# DN2026_0120 D1: 축 → Notion 캐논 빌런(02_EDT_CHARACTER_CANON v2.18.1 CHAR_VILLAIN_001·004·005, '노션이 최종')
+CANON_VILLAIN = {"rates": "Debt Titan", "volatility": "Volatility Hydra", "momentum": "Algorithm Reaper"}
+# DN2026_0120 D2: 시즌 4막 — 주차(1~4) → 막
+ACTS = {1: "INTRO", 2: "RISE", 3: "CLASH", 4: "FINALE"}
 GATE_FALLBACK = VILLAIN_DEBT_TITAN
 SEASON_WEEKS = 4
 FALLBACK_ENDINGS = ("QUESTION", "DECLARE", "TEASE", "TWIST")
@@ -104,13 +110,13 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
 
     villain_raw, _theme, scores = select_villain(market_data, prev_state)
     axis = AXIS[villain_raw]
-    villain = gate(villain_raw, allowed)
+    villain = gate(CANON_VILLAIN[axis], allowed)   # DN2026_0120 D1
 
     # 2순위 축: villain_raw 를 제외한 최고 점수(스트릭 회전으로 raw가 2순위가 된 경우도 중복 없음)
     others = sorted((k for k in scores if k != villain_raw), key=lambda k: scores[k], reverse=True)
     omen_raw = others[0] if others else villain_raw
     omen_axis = AXIS[omen_raw]
-    omen_villain = gate(omen_raw, allowed)
+    omen_villain = gate(CANON_VILLAIN[omen_axis], allowed)   # DN2026_0120 D1
 
     if prev:
         week = int(prev_ss.get("season_week") or 0) + 1
@@ -140,14 +146,19 @@ def decide(market_data: dict, prev: dict | None, canon: dict | None = None,
         "hero_focus": HERO_FOCUS[axis],
         "season_no": season,
         "season_week": week,
+        "act": ACTS.get(week, "INTRO"),   # DN2026_0120 D2
         "villain_streak": streak,
-        "ending_type": _ending_type(prev),
+        # DN2026_0120 D2: 시즌 마지막 회(FINALE)는 다음 시즌 예고(TEASE) 고정, 그 외 회전
+        "ending_type": "TEASE" if ACTS.get(week) == "FINALE" else _ending_type(prev),
         "omen_payoff": payoff,
         "prev_unresolved": prev_ss.get("unresolved"),
+        "prev_recap": prev_ss.get("recap"),   # DN2026_0120 D3
+        "prev_lines": list(prev_ss.get("lines") or []),   # DN2026_0120 D5: 직전 2회 대사(금지 목록)
         # R6-06 D2: 이번 회차 계산에 쓴 직전 주 상태 — 같은 주 재실행 시 동일 계산 재현용
         "basis": ({k: prev_ss.get(k) for k in ("villain_raw", "villain", "villain_streak", "season_no",
                                                "season_week", "omen_villain", "omen_axis", "ending_type",
-                                               "unresolved")} | {"villain_raw": prev_raw}) if prev else None,
+                                               "unresolved", "recap", "lines")}
+                  | {"villain_raw": prev_raw}) if prev else None,
     }
 
 
@@ -157,6 +168,27 @@ def apply_focus(plan: list[dict], hero_focus: str) -> list[dict]:
     for cut in new:
         if cut.get("role") == "TURN":
             cut["characters"] = list(dict.fromkeys([hero_focus, "EDT"]))
+    return new
+
+
+def apply_omen(plan: list[dict], villain: str, omen_villain: str) -> list[dict]:
+    """DN2026_0120 D1: NEXT_OMEN 컷의 빌런을 다음 회 예고 빌런으로 바꾼 새 plan. 원본 불변."""
+    new = copy.deepcopy(plan)
+    for cut in new:
+        if cut.get("role") == "NEXT_OMEN":
+            cut["characters"] = list(dict.fromkeys(omen_villain if c == villain else c
+                                                   for c in cut["characters"]))
+    return new
+
+
+def apply_script_cast(plan: list[dict], script: dict) -> list[dict]:
+    """DN2026_0120 D6: 대본이 고른 비트별 화면 캐릭터(script.resolve_characters 검증 완료)를 plan에 반영."""
+    by_cut = {int(b["cut"]): b.get("characters") for b in (script or {}).get("beats") or []}
+    new = copy.deepcopy(plan)
+    for cut in new:
+        chars = by_cut.get(int(cut["cut"]))
+        if chars:
+            cut["characters"] = list(chars)
     return new
 
 
@@ -175,4 +207,24 @@ def next_state(decision: dict, script: dict) -> dict:
         "hero_focus": decision["hero_focus"],
         "unresolved": beats[-1]["narration"] if beats else None,
         "basis": decision.get("basis"),   # R6-06 D2
+        "act": decision.get("act"),   # DN2026_0120 D2
+        "recap": build_recap(decision, beats),   # DN2026_0120 D3
+        # DN2026_0120 D5: 이번 회 + 직전 회 대사(최대 2회분)를 다음 회 금지 목록으로 넘긴다
+        "lines": [b["narration"] for b in beats] + list(decision.get("prev_lines") or [])[:len(beats) or 0],
+    }
+
+
+def build_recap(decision: dict, beats: list[dict]) -> dict:
+    """DN2026_0120 D3: 다음 회 프롬프트·템플릿에 넘길 직전 회차 요약(숫자 없는 사실만)."""
+    by_role = {b.get("role"): b.get("narration") for b in beats}
+    return {
+        "season_no": decision.get("season_no"),
+        "season_week": decision.get("season_week"),
+        "act": decision.get("act"),
+        "villain": decision.get("villain"),
+        "axis": decision.get("axis"),
+        "hero_focus": decision.get("hero_focus"),
+        "turn": by_role.get("TURN") or by_role.get("REGROUP"),
+        "lesson": by_role.get("RESOLVE"),
+        "omen": by_role.get("NEXT_OMEN"),
     }
