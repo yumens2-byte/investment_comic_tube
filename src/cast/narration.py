@@ -1,8 +1,8 @@
 """CAST-LINE 비트별 한국어 내레이션 TTS — DN2026_0115 P2 미디어 레이어.
 
-- 합성은 src.tts.synthesize_narrations 재사용(DN2026_0119 style_mode 옵션 추가, 기본값은 일간 라인 불변). 반환 (paths, reason).
+- 합성은 src.tts.synthesize_narrations 재사용(DN2026_0121 style_mode 옵션 추가, 기본값은 일간 라인 불변). 반환 (paths, reason).
 - reason 이 None 이 아니거나 경로에 None 이 있으면 NarrationError(fail-closed, 부분 내레이션 발행 금지).
-- DN2026_0119: 대본은 text, 톤은 speech_metadata.style 로 분리 합성(지시문 낭독 방지) → 앞뒤 무음 제거
+- DN2026_0121: 대본은 text, 톤은 speech_metadata.style 로 분리 합성(지시문 낭독 방지) → 앞뒤 무음 제거
   → ffprobe 실측 → 낭독 속도 감시(지시문 낭독 의심 경고)
   → fit_cuts(컷 5~10초, tempo ≤1.25, 합성 ≤58초) 위반이면 NarrationError(fal 호출 전).
   tempo_for 는 DN2026_0115 호환용(미사용).
@@ -33,7 +33,7 @@ TOTAL_MIN_SEC = 16        # 합성 하한 15초 + 1초
 TOTAL_MAX_SEC = 58        # Shorts 60초 이내(합성 상한 60초 - 2초)
 PROBE_TIMEOUT_SEC = 30
 
-# DN2026_0115 — 역할별 낭독 톤. DN2026_0119: speech_metadata.style 로 대사와 분리 전달
+# DN2026_0115 — 역할별 낭독 톤. DN2026_0121: speech_metadata.style 로 대사와 분리 전달
 ROLE_TONE = {
     "ESTABLISH_THREAT": "긴박한 톤",
     "ESCALATE": "점점 고조되는 톤",
@@ -50,14 +50,14 @@ class NarrationError(RuntimeError):
 
 
 DEFAULT_ROLE_TONE = "자연스러운 톤"
-# DN2026_0119: 0116 D안의 속도 지시 접두어·과길이 재합성은 폐기 — '느린 낭독'은 지시문이 함께 읽힌 결과였다
+# DN2026_0121: 0116 D안의 속도 지시 접두어·과길이 재합성은 폐기 — '느린 낭독'은 지시문이 함께 읽힌 결과였다
 #   (11-21 실측: 대사만 1.8~2.8자/초, 지시문 포함 4.7~6.6자/초). 톤은 speech_metadata.style 로 분리한다.
 SLOW_SUSPECT_CPS = 3.0    # 대사만 기준 초당 글자 수가 이보다 낮으면 지시문 낭독 의심 경고(차단 아님)
 TTS_STYLE_MODE = "speech_metadata"
 
 
 def tone_for(role: str | None) -> str:
-    """역할 → 낭독 스타일(speech_metadata.style). 미정의 역할은 자연스러운 톤. # DN2026_0115 → DN2026_0119"""
+    """역할 → 낭독 스타일(speech_metadata.style). 미정의 역할은 자연스러운 톤. # DN2026_0115 → DN2026_0121"""
     return ROLE_TONE.get(role or "", DEFAULT_ROLE_TONE)
 
 
@@ -194,12 +194,12 @@ def synthesize(beats: list[dict], out_dir: str = "artifacts_cast/audio", *,
     secs = [_probe(wav) for wav in paths]
     for b, r, sec, text in zip(beats, raw, secs, texts):
         logger.info("narration_measured cut=%s raw=%.2f sec=%.2f chars=%d", b["cut"], r, sec, len(text))
-    # DN2026_0119: 지시문 낭독 감시 — 대사만 기준 낭독 속도가 비정상적으로 느리면 경고(차단은 fit_cuts 판정에 맡김)
+    # DN2026_0121: 지시문 낭독 감시 — 대사만 기준 낭독 속도가 비정상적으로 느리면 경고(차단은 fit_cuts 판정에 맡김)
     suspect = [b["cut"] for b, sec, text in zip(beats, secs, texts)
                if sec > 0 and len(text.replace(" ", "")) / sec < SLOW_SUSPECT_CPS]
     if suspect:
         logger.warning("narration_slow_suspect cuts=%s threshold=%.1fcps (지시문 낭독 의심)", suspect, SLOW_SUSPECT_CPS)
-        print(f"::warning::narration_slow_suspect cuts={suspect} — 지시문 낭독 의심(DN2026_0119)")
+        print(f"::warning::narration_slow_suspect cuts={suspect} — 지시문 낭독 의심(DN2026_0121)")
     fitted = fit_cuts(secs)
     out: list[dict] = []
     for b, wav, sec, f in zip(beats, paths, secs, fitted):

@@ -183,7 +183,7 @@ jobs:
           path: artifacts_cast/publish_result.json
           if-no-files-found: ignore
           retention-days: 7   # DN2026_0118: 공개 레포 artifact 보관 단축(영상 ID는 마스킹 기록)
-      - name: Upload shadow short (검수용 합성 영상, shadow 만 — DN2026_0119)
+      - name: Upload shadow short (검수용 합성 영상, shadow 만 — DN2026_0121)
         if: needs.plan.outputs.mode == 'shadow'
         uses: actions/upload-artifact@v5
         with:

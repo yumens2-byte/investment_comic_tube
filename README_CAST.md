@@ -42,7 +42,10 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 
 - **스토리 결정**(plan):
   - `storyline.decide`가 `market_regime.select_villain`의 3축 점수로 이번 주 축과 빌런을 정한다.
-  - 캐논에 등재된 빌런만 등장한다. 지금은 Debt Titan뿐이라, 다른 축이 선택되면 Debt Titan이 그 축의 공격 형태로 나온다.
+  - 화면 빌런은 축별 Notion 캐논 빌런이다(DN2026_0122): 금리=Debt Titan, 변동성=Volatility Hydra, 과열=Algorithm Reaper. 회전·스트릭은 market_regime 원 빌런(villain_raw) 기준이다. 영상 캐논에 없는 빌런은 Debt Titan이 그 축의 공격 형태로 대체한다.
+  - 시즌 4막(DN2026_0122): 1주 도입 → 2주 고조(밀림·동료 합류) → 3주 결전 → 4주 결말(엔딩은 다음 시즌 예고로 고정).
+  - 이어받기(DN2026_0122): story_state에 recap(막·빌런·전환·교훈·예고)과 직전 2회 대사(lines)를 저장해 다음 대본에 넘긴다. 대사는 역할·막별 후보 풀에서 고르고, 직전 2회와 같은 문장은 금지한다.
+  - 배역(DN2026_0122): 대본이 비트별 화면 캐릭터(1~2명)를 고르고, situation_en에 그 이름이 없으면 위반으로 처리한다. NEXT_OMEN 컷에는 다음 회 예고 빌런이 나온다.
   - 2순위 축은 다음 주 예고(omen)로 쓴다. 다음 회차는 예고가 맞았는지(hit) 빗나갔는지(twist)를 회수한다.
   - TURN 비트 주역은 축으로 정한다. 금리는 EDT, 변동성은 FG-01, 과열은 LEV-01이다.
   - 시즌은 4주, 같은 빌런은 최대 3주 연속이다.
@@ -55,7 +58,7 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 - **TTS**(generate, `narration.py`): 내레이션 회차는 `CAST_CUT_SEC`를 쓰지 않고 TTS 실측으로 컷 길이를 정한다(DN2026_0116).
   - `src.tts.synthesize_narrations`로 합성한다. 모델은 `CAST_TTS_MODEL`(기본 gemini-3.8-flash-tts), 음성은 `TTS_VOICE`(기본 Charon)이다.
   - 첫 fal 제출 전에 실행한다. TTS wav의 앞뒤 무음(-45dB)을 잘라낸 뒤 길이를 잰다(실패 시 원본 길이).
-  - DN2026_0119: TTS(gemini-3.8-flash-tts)는 보낸 글을 그대로 낭독하므로, 대사는 text·톤은 `speech_metadata.style`로 분리해 보낸다(src/tts.py `style_mode="speech_metadata"`, CAST 전용 — 일간 라인은 기존 방식). 0116의 속도 지시 접두어·과길이 재합성은 폐기(원인이 지시문 낭독이었음). 대사만 기준 3자/초 미만이면 `narration_slow_suspect` 경고.
+  - DN2026_0121: TTS(gemini-3.8-flash-tts)는 보낸 글을 그대로 낭독하므로, 대사는 text·톤은 `speech_metadata.style`로 분리해 보낸다(src/tts.py `style_mode="speech_metadata"`, CAST 전용 — 일간 라인은 기존 방식). 0116의 속도 지시 접두어·과길이 재합성은 폐기(원인이 지시문 낭독이었음). 대사만 기준 3자/초 미만이면 `narration_slow_suspect` 경고.
   - 컷 길이 = max(5, ceil(내레이션/tempo + 0.6초)) ≤ 10. 10초를 넘는 비트는 최대 1.25배(atempo, 음높이 유지)로 압축한다(shadow 실측 초당 2.0~3.4자).
   - 1.25배를 넘는 문장은 차단한다. 합성 길이(Σ 내레이션/tempo + 0.6초)가 58초를 넘으면 전 컷 공통 tempo를 1.25배까지 올려 맞추고, 그래도 넘으면 fal 호출 없이 차단한다. 오류에는 전 비트 길이를 남긴다. 컷 합계 16초 미만이면 짧은 컷부터 1초씩 늘린다.
   - 스토리 상태(record_story)는 TTS·실측 비용 판정을 통과한 뒤, 첫 fal 제출 직전에 기록한다.

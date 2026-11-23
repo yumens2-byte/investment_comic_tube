@@ -43,8 +43,10 @@ class FakeClient:
 
 
 def good_beats(plan, **override):
+    # DN2026_0122 D6: situation_en 에 화면 캐릭터 이름 필수
     beats = [{"cut": c["cut"], "narration": f"{c['role']} 장면이 이어진다"[:20],
-              "situation_en": "The hero turns toward the storm, slow push in."} for c in plan]
+              "situation_en": f"{' and '.join(C.screen_names(c['characters']))} turn toward the storm, slow push in."}
+             for c in plan]
     beats[0]["narration"] = "{{FACT:VIX.change_pct}}, 혼돈이 시작됐다"
     for cut, nar in override.items():
         beats[int(cut[1:]) - 1]["narration"] = nar
@@ -72,7 +74,7 @@ def test_dry_run_template_no_external_call(monkeypatch, t3):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
     monkeypatch.setattr(C, "_make_client", lambda key: pytest.fail("외부 호출 금지"))
     s = C.build_script("T3", t3, SNAP, decision(), None, "dry_run")
-    assert s["source"] == "template" and s["version"] == 2 and s["ending_type"] == "TEASE"
+    assert s["source"] == "template" and s["version"] == C.SCRIPT_VERSION and s["ending_type"] == "TEASE"
     assert [b["cut"] for b in s["beats"]] == [c["cut"] for c in t3]
     assert [b["role"] for b in s["beats"]] == [c["role"] for c in t3]
     assert s["beats"][0]["narration"].startswith("VIX 12.34% 하락")
@@ -91,14 +93,26 @@ FOCUS = ("EDT", "FG-01", "LEV-01")
 PAYOFF = (None, "hit", "twist")
 
 
+VILLAINS = ("Debt Titan", "Volatility Hydra", "Algorithm Reaper")   # DN2026_0122
+ACTS = ("INTRO", "RISE", "CLASH", "FINALE")
+RECAPS = (None, {"villain": "Debt Titan"}, {"villain": "Volatility Hydra"}, {"villain": "Algorithm Reaper"})
+
+
 @pytest.mark.parametrize("tier", ["T1", "T2", "T3"])
 @pytest.mark.parametrize("snap", [SNAP, {"SPX": {"close": 1, "change_pct": 0.5}}, {}])
 def test_all_templates_within_limits(tier, snap):
     plan = cast_for_tier(tier)
-    for axis, omen, ending, focus, payoff in itertools.product(AXES, AXES, ENDINGS, FOCUS, PAYOFF):
-        d = decision(axis=axis, omen_axis=omen, ending_type=ending, hero_focus=focus, omen_payoff=payoff)
+    combos = itertools.product(AXES, AXES, ENDINGS, FOCUS, PAYOFF, VILLAINS, ACTS, RECAPS)
+    for axis, omen, ending, focus, payoff, villain, act, recap in combos:
+        if villain not in ("Debt Titan", {"rates": "Debt Titan", "volatility": "Volatility Hydra",
+                                          "momentum": "Algorithm Reaper"}[axis]):
+            continue   # 화면 빌런은 축의 캐논 빌런 또는 게이트 대체(Debt Titan)뿐
+        if snap is not SNAP and (act, recap) != ("INTRO", None):
+            continue   # 빈 스냅샷 조합은 기본 막만(실행 시간)
+        d = decision(axis=axis, omen_axis=omen, ending_type=ending, hero_focus=focus, omen_payoff=payoff,
+                     villain=villain, act=act, prev_recap=recap)
         for i, cut in enumerate(plan):
-            raw = C.template_line(cut["role"], i, d, snap)
+            raw = C.template_line(cut["role"], i, d, snap, cut)
             assert market_facts.check_line(raw) is None, raw
             assert len(market_facts.TOKEN.sub("", raw)) <= C.MAX_TEMPLATE_CHARS, raw
             resolved = market_facts.resolve(raw, snap)
@@ -147,7 +161,8 @@ def test_gemini_second_violation_template_replaces_beat(client, t3):
     c = client([bad, bad])
     s = C.build_script("T3", t3, SNAP, decision(), None, "live")
     assert s["source"] == "gemini+template" and len(c.prompts) == 2
-    assert s["beats"][5]["narration"] == "흔들릴수록 비중 관리가 먼저다"
+    assert s["beats"][5]["narration"] == C.template_line("RESOLVE", 5, decision(), SNAP, t3[5])
+    assert s["beats"][5]["narration"] in C._RESOLVE_POOL["volatility"]["default"]
     assert s["beats"][1]["narration"].startswith("ESCALATE")
 
 
@@ -252,3 +267,122 @@ def test_token_only_in_first_beat_and_plain_limit(client, t3):
     assert "VIX" not in s["beats"][3]["narration"] and len(s["beats"][4]["narration"]) <= C.MAX_PLAIN_CHARS
     reason, _ = C.check_beat({"narration": "{{FACT:VIX.close}} 공포", "situation_en": "x y"}, SNAP, allow_token=False)
     assert reason == "token_not_allowed"
+
+
+# ---------- DN2026_0122 D5·D6 ----------
+
+def test_pools_avoid_banned_lines(t3):
+    d = decision(act="RISE")
+    first = C._template_script(t3, d, SNAP, C.load_cast_canon())
+    lines = [b["narration"] for b in first["beats"]]
+    again = C._template_script(t3, decision(act="RISE", prev_lines=[lines]), SNAP, C.load_cast_canon())
+    plain = [(a["narration"], b["narration"]) for a, b in zip(first["beats"], again["beats"])
+             if a["role"] not in ("ESTABLISH_THREAT", "NEXT_OMEN")]
+    assert all(x != y for x, y in plain), plain
+
+
+def test_template_deterministic_per_decision(t3):
+    canon = C.load_cast_canon()
+    assert C._template_script(t3, decision(), SNAP, canon) == C._template_script(t3, decision(), SNAP, canon)
+
+
+def test_template_situation_names_on_screen(t3):
+    s = C._template_script(t3, decision(villain="Volatility Hydra"), SNAP, C.load_cast_canon())
+    for cut, beat in zip(t3, s["beats"]):
+        assert not C.missing_on_screen(beat["situation_en"], cut["characters"]), beat
+        assert beat["characters"] == cut["characters"]
+
+
+def test_finale_omen_teases_next_season(t3):
+    s = C._template_script(t3, decision(act="FINALE"), SNAP, C.load_cast_canon())
+    assert s["beats"][-1]["narration"].startswith("다음 시즌, ")
+
+
+def test_villain_kr_canon_names():
+    assert C.villain_kr("Volatility Hydra") == "볼래틸리티히드라"
+    assert C.villain_kr("Algorithm Reaper") == "알고리즘리퍼"
+    assert C.villain_kr("Debt Titan") == "뎁트타이탄"
+
+
+def test_gemini_duplicate_line_is_violation(client, t3):
+    banned_line = "ENGAGE 장면이 이어진다"
+    c = client([good_beats(t3), good_beats(t3, c3="EDT가 새 각오를 다진다")])
+    s = C.build_script("T3", t3, SNAP, decision(prev_lines=[banned_line]), None, "shadow")
+    assert len(c.prompts) == 2 and "cut 3: duplicate_line" in c.prompts[1]
+    assert banned_line in c.prompts[0]                       # 금지 목록 프롬프트 주입
+    assert s["beats"][2]["narration"] == "EDT가 새 각오를 다진다"
+
+
+def test_gemini_missing_character_is_violation(client, t3):
+    beats = json.loads(good_beats(t3))
+    beats[2]["situation_en"] = "A lone figure stands on a rooftop, slow push in."
+    c = client([json.dumps(beats, ensure_ascii=False), good_beats(t3)])
+    C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert "cut 3: situation_missing_character" in c.prompts[1]
+
+
+def test_gemini_characters_validated(client, t3):
+    beats = json.loads(good_beats(t3))
+    beats[1]["characters"] = ["LEV-01", "EDT"]; beats[1]["situation_en"] = "Leverage Muscle Man and EDT run."
+    beats[2]["characters"] = ["Debt Titan"]                     # 빌런 없는 컷에 빌런 → 기본 출연
+    beats[3]["characters"] = ["EDT"]                            # 빌런 컷에서 빌런 누락 → 기본 출연
+    beats[4]["characters"] = ["LEV-01"]                         # TURN 은 고정
+    c = client([json.dumps(beats, ensure_ascii=False)])
+    s = C.build_script("T3", t3, SNAP, decision(), None, "live")
+    assert s["source"] == "gemini" and len(c.prompts) == 1
+    got = [b["characters"] for b in s["beats"]]
+    assert got[1] == ["LEV-01", "EDT"] and got[2] == t3[2]["characters"]
+    assert got[3] == t3[3]["characters"] and got[4] == t3[4]["characters"]
+
+
+def test_payoff_escalate_respects_banned(t3):
+    d = decision(omen_payoff="twist")
+    first = C.template_line("ESCALATE", 1, d, SNAP, t3[1])
+    again = C.template_line("ESCALATE", 1, decision(omen_payoff="twist", prev_lines=[[first]]), SNAP, t3[1])
+    assert first.startswith("예상 밖, ") and again.startswith("예상 밖, ") and first != again
+
+
+
+def test_every_pool_candidate_within_limits():
+    """R6-12 (f): 시드가 고른 1개가 아니라 풀의 모든 후보를 금지 목록을 늘려 가며 전수 검사(STD-PROC-07)."""
+    canon_villain = {"rates": "Debt Titan", "volatility": "Volatility Hydra", "momentum": "Algorithm Reaper"}
+    roles = ("ESCALATE", "ENGAGE", "CRISIS", "TURN", "RESOLVE", "REGROUP", "AFTERMATH_CALM", "NEXT_OMEN")
+    seen_total = 0
+    for tier in ("T1", "T2", "T3"):
+        for cut in cast_for_tier(tier):
+            if cut["role"] not in roles:
+                continue
+            combos = itertools.product(AXES, ACTS, FOCUS, PAYOFF, RECAPS, ENDINGS, ("canon", "gated"))
+            for axis, act, focus, payoff, recap, ending, vk in combos:
+                villain = canon_villain[axis] if vk == "canon" else "Debt Titan"
+                banned: list[str] = []
+                for _ in range(12):
+                    d = decision(axis=axis, act=act, hero_focus=focus, omen_payoff=payoff, prev_recap=recap,
+                                 villain=villain, ending_type=ending, prev_lines=[banned])
+                    line = C.template_line(cut["role"], 1, d, SNAP, cut)
+                    if line in banned:
+                        break
+                    banned.append(line)
+                    seen_total += 1
+                    assert len(line) <= C.MAX_PLAIN_CHARS, line
+                    assert market_facts.check_line(line) is None and not C.FORBIDDEN.search(line), line
+                    assert C.ALLOWED_CHARS.match(line), line
+    assert seen_total > 1000
+
+
+def test_resolve_characters_requires_confirmed_ref(monkeypatch, t3):
+    monkeypatch.setattr(C, "confirmed_heroes", lambda: {"EDT", "FG-01"})
+    cut = t3[1]
+    assert C.resolve_characters({"characters": ["LEV-01", "EDT"]}, cut) == cut["characters"]
+    assert C.resolve_characters({"characters": ["FG-01", "EDT"]}, cut) == ["FG-01", "EDT"]
+
+
+def test_merge_duplicate_rechecked(client):
+    """R6-12 (c): 1차 cut2 유효 + 2차 cut3 이 같은 문장이면 병합 후 템플릿 대체."""
+    t2 = cast_for_tier("T2")
+    first = json.loads(good_beats(t2, c2="같은 문장이다", c3="매수하세요"))
+    second = json.loads(good_beats(t2, c2="지금 바로 매수하세요", c3="같은 문장이다"))
+    client([json.dumps(first, ensure_ascii=False), json.dumps(second, ensure_ascii=False)])
+    s = C.build_script("T2", t2, SNAP, decision(), None, "live")
+    lines = [b["narration"] for b in s["beats"]]
+    assert lines.count("같은 문장이다") == 1 and len(set(lines)) == len(lines)

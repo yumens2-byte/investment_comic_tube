@@ -7,6 +7,7 @@ import src.cast.storyline as S
 from src.cast.casting import cast_for_tier
 
 DT, CR, BB = "Debt Titan", "Chaos Reaper", "Bull Brute"
+VH, AR = "Volatility Hydra", "Algorithm Reaper"   # DN2026_0122 Notion 캐논 빌런
 
 
 @pytest.fixture
@@ -23,22 +24,31 @@ def fake_select(monkeypatch):
 
 
 def test_allowed_villains_from_canon():
-    assert S.allowed_villains() == {DT}
+    assert S.allowed_villains() == {DT, VH, AR}   # DN2026_0122
 
 
-def test_gate_chaos_reaper_to_debt_titan_keeps_axis(fake_select, caplog):
+@pytest.mark.parametrize("raw,axis,villain", [(DT, "rates", DT), (CR, "volatility", VH), (BB, "momentum", AR)])
+def test_axis_maps_to_notion_canon_villain(fake_select, raw, axis, villain):
+    fake_select(raw, {DT: 0.0, CR: 0.0, BB: 0.0, raw: 5.0})
+    d = S.decide({}, None)
+    assert (d["villain"], d["villain_raw"], d["axis"]) == (villain, raw, axis)
+
+
+def test_gate_falls_back_to_debt_titan_when_canon_missing(fake_select, caplog):
     fake_select(CR, {DT: 1.0, CR: 9.0, BB: 3.0})
+    canon = copy.deepcopy(S.load_cast_canon())
+    canon["characters"].pop(VH)
     with caplog.at_level("INFO", logger="cast.storyline"):
-        d = S.decide({}, None)
+        d = S.decide({}, None, canon=canon)
     assert d["villain"] == DT and d["villain_raw"] == CR and d["axis"] == "volatility"
     assert d["hero_focus"] == "FG-01"
-    assert "villain_gated raw=Chaos Reaper" in caplog.text
+    assert "villain_gated raw=Volatility Hydra" in caplog.text
 
 
 def test_omen_is_second_ranked(fake_select):
     fake_select(CR, {DT: 1.0, CR: 9.0, BB: 3.0})
     d = S.decide({}, None)
-    assert d["omen_axis"] == "momentum" and d["omen_villain"] == DT   # Bull Brute 게이트
+    assert d["omen_axis"] == "momentum" and d["omen_villain"] == AR
 
 
 def test_omen_excludes_rotated_raw(fake_select):
@@ -118,8 +128,10 @@ def test_next_state_fields(fake_select):
     d = S.decide({}, None)
     st = S.next_state(d, {"ending_type": "QUESTION", "beats": [{"narration": "a"}, {"narration": "끝"}]})
     assert set(st) == {"villain", "villain_raw", "axis", "villain_streak", "season_no", "season_week",
-                       "omen_villain", "omen_axis", "ending_type", "hero_focus", "unresolved", "basis"}
-    assert st["unresolved"] == "끝" and st["villain"] == DT and st["villain_raw"] == CR
+                       "omen_villain", "omen_axis", "ending_type", "hero_focus", "unresolved", "basis",
+                       "act", "recap", "lines"}   # DN2026_0122
+    assert st["unresolved"] == "끝" and st["villain"] == VH and st["villain_raw"] == CR
+    assert st["act"] == "INTRO" and st["lines"] == [["a", "끝"]] and st["recap"]["villain"] == VH
 
 
 
@@ -134,7 +146,7 @@ def test_gated_prev_rotation_uses_raw():
     for week in range(6):
         d = S.decide(data, prev)
         raws.append(d["villain_raw"]); streaks.append(d["villain_streak"])
-        assert d["villain"] == "Debt Titan"          # 캐논 게이트
+        assert d["villain"] == (AR if d["villain_raw"] == BB else S.CANON_VILLAIN[d["axis"]])   # DN2026_0122
         prev = {"run_id": str(week), "villain": d["villain"],
                 "story_state": {**S.next_state(d, {"beats": [{"narration": "x"}]})}}
     assert raws[:3] == [BB, BB, BB]
@@ -189,3 +201,58 @@ def test_same_week_rerun_first_episode_and_next_week_and_no_nesting():
     assert nxt["season_week"] == 2
     st2 = S.next_state(nxt, {"beats": [{"narration": "y"}]})
     assert "basis" not in (st2["basis"] or {})             # 중첩 누적 없음
+
+
+# ---------- DN2026_0122 D2·D3·D5 ----------
+
+@pytest.mark.parametrize("week,act", [(1, "INTRO"), (2, "RISE"), (3, "CLASH"), (4, "FINALE")])
+def test_season_acts(fake_select, week, act):
+    fake_select(DT, {DT: 5.0, CR: 0.0, BB: 0.0})
+    prev = None if week == 1 else {"villain": DT, "story_state": {"season_no": 1, "season_week": week - 1,
+                                                                   "ending_type": "QUESTION"}}
+    d = S.decide({}, prev)
+    assert d["season_week"] == week and d["act"] == act
+    if act == "FINALE":
+        assert d["ending_type"] == "TEASE"
+
+
+def test_recap_and_lines_carry_two_episodes(fake_select):
+    fake_select(DT, {DT: 5.0, CR: 0.0, BB: 0.0})
+    d1 = S.decide({}, None)
+    st1 = S.next_state(d1, {"beats": [{"role": "TURN", "narration": "t1"}, {"role": "RESOLVE", "narration": "r1"}]})
+    d2 = S.decide({}, {"villain": DT, "story_state": st1})
+    assert d2["prev_recap"]["turn"] == "t1" and d2["prev_recap"]["lesson"] == "r1"
+    assert d2["prev_lines"] == [["t1", "r1"]]
+    st2 = S.next_state(d2, {"beats": [{"role": "TURN", "narration": "t2"}, {"role": "RESOLVE", "narration": "r2"}]})
+    assert st2["lines"] == [["t2", "r2"], ["t1", "r1"]]          # 이번 회 + 직전 회(2회분)
+    d3 = S.decide({}, {"villain": DT, "story_state": st2})
+    st3 = S.next_state(d3, {"beats": [{"role": "TURN", "narration": "t3"}]})
+    assert st3["lines"] == [["t3"], ["t2", "r2"]]                 # 3회 전은 빠진다
+
+
+def test_lines_two_episodes_regardless_of_beat_count(fake_select):
+    """R6-12 (b): T3(7) → T1(3) → T3(7) 에서도 정확히 2회분."""
+    fake_select(DT, {DT: 5.0, CR: 0.0, BB: 0.0})
+    prev = None
+    for n, tag in ((7, "a"), (3, "b"), (7, "c")):
+        d = S.decide({}, prev)
+        st = S.next_state(d, {"beats": [{"role": "X", "narration": f"{tag}{i}"} for i in range(n)]})
+        prev = {"villain": DT, "story_state": st}
+    assert [len(e) for e in st["lines"]] == [7, 3] and st["lines"][1][0] == "b0"
+
+
+def test_legacy_flat_lines_treated_as_one_episode(fake_select):
+    fake_select(DT, {DT: 5.0, CR: 0.0, BB: 0.0})
+    d = S.decide({}, {"villain": DT, "story_state": {"season_week": 1, "lines": ["x", "y"]}})
+    st = S.next_state(d, {"beats": [{"role": "X", "narration": "z"}]})
+    assert st["lines"] == [["z"], ["x", "y"]]
+
+
+def test_apply_omen_and_script_cast():
+    plan = cast_for_tier("T3", villain=VH)
+    orig = copy.deepcopy(plan)
+    new = S.apply_omen(plan, VH, AR)
+    assert plan == orig
+    assert new[-1]["characters"] == ["EDT", AR] and new[3]["characters"] == [VH, "FG-01"]
+    cast = S.apply_script_cast(new, {"beats": [{"cut": 2, "characters": ["LEV-01", "EDT"]}]})
+    assert cast[1]["characters"] == ["LEV-01", "EDT"] and cast[2] == new[2]

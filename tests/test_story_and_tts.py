@@ -198,7 +198,7 @@ class QuotaDetectionTest(unittest.TestCase):
 
 
 class TestDn20260119StyleMode(unittest.TestCase):
-    """DN2026_0119 — style_mode=speech_metadata 는 대사만 text, 톤은 speech_metadata.style. 기본은 기존 프롬프트."""
+    """DN2026_0121 — style_mode=speech_metadata 는 대사만 text, 톤은 speech_metadata.style. 기본은 기존 프롬프트."""
 
     def _run(self, **kw):
         from unittest.mock import patch, MagicMock

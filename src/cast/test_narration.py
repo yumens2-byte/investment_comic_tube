@@ -46,7 +46,7 @@ def test_synthesize_real_wav(tmp_path, monkeypatch):
     # DN2026_0116: 컷 길이 = max(5, ceil(sec+0.6)) → 2.0→5, 5.7→7, 6.2→7 (합 19 ≥ 16)
     assert [o["cut_sec"] for o in out] == [5, 7, 7] and all(o["tempo"] == 1.0 for o in out)
     assert calls[0]["model"] == "gemini-3.8-flash-tts" and calls[0]["voice"] == "Charon"
-    # DN2026_0119: 톤은 순수 스타일 문자열, 대본과 분리(speech_metadata)
+    # DN2026_0121: 톤은 순수 스타일 문자열, 대본과 분리(speech_metadata)
     assert calls[0]["tones"] == ["긴박한 톤", "절박한 톤", "차분한 톤"]
     assert calls[0]["style_mode"] == "speech_metadata"
     assert len(calls) == 1   # 재합성 없음
@@ -92,7 +92,7 @@ def test_none_path_raises(tmp_path, monkeypatch):
 
 
 def test_tone_mapping():
-    """DN2026_0119 — 속도 접두어 제거, 역할 톤만."""
+    """DN2026_0121 — 속도 접두어 제거, 역할 톤만."""
     assert N.tone_for("ESTABLISH_THREAT") == "긴박한 톤"
     assert N.tone_for("ESCALATE") == "점점 고조되는 톤"
     assert N.tone_for("ENGAGE") == "단호한 톤"
@@ -173,7 +173,7 @@ def test_trim_silence_fail_open(tmp_path):
 
 @pytest.mark.skipif(not HAS_FF, reason="ffmpeg/ffprobe 없음")
 def test_slow_suspect_warning_no_retry(tmp_path, monkeypatch, capsys):
-    """DN2026_0119 — 대사만 기준 3자/초 미만 비트만 경고, 재합성 호출 없음."""
+    """DN2026_0121 — 대사만 기준 3자/초 미만 비트만 경고, 재합성 호출 없음."""
     calls = []
     beats = [{"cut": 1, "role": "ESTABLISH_THREAT", "narration": "가" * 15, "situation_en": "x"},   # 15자/3초=5cps
              {"cut": 2, "role": "CRISIS", "narration": "나" * 18, "situation_en": "x"},             # 18자/9초=2cps
