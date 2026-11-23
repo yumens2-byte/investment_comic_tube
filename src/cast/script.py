@@ -520,6 +520,9 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
             # DN2026_0123: 사유 코드(내부 상수, 본문 아님)를 남겨 위반 원인을 운영 로그로 추적
             logger.warning("script_violation attempt=1 cuts=%s reasons=%s", sorted(bad),
                            {c: str(r).split(":")[0] for c, r in sorted(bad.items())})
+            for c in sorted(bad):   # 위반 문장(공개될 내레이션 후보, 키·식별자 없음) 앞 40자 — 원인 추적용
+                logger.info("script_violation_line cut=%s line=%r", c,
+                            str((results[c][0] or {}).get("narration") or "")[:40])
             repair = prompt + "\n[위반 수정 요청] " + "; ".join(f"cut {c}: {r}" for c, r in sorted(bad.items())) \
                 + " — 규칙을 지켜 전체 배열을 다시 출력하라."
             try:

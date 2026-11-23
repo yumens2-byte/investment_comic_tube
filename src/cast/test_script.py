@@ -403,6 +403,13 @@ def test_violation_reasons_logged(client, t3, caplog):
     assert "reasons={3: 'unregistered_market_numeric_claim'}" in caplog.text
 
 
+def test_violation_line_logged(client, t3, caplog):
+    client([good_beats(t3, c3="금리 5% 돌파한다"), good_beats(t3)])
+    with caplog.at_level("INFO", logger="cast.script"):
+        C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert "script_violation_line cut=3 line='금리 5% 돌파한다'" in caplog.text
+
+
 
 def test_prompt_persona_quantity_sanitized_and_limits(t3):
     """DN2026_0123 진단: LEV-01 페르소나 '세 배' → 프롬프트에선 '몇 배', 비트별 글자 상한 표기."""
