@@ -13,3 +13,4 @@ fonttools==4.61.1
 
 exchange-calendars==4.13.2
 cryptography==50.0.1
+fal-client==1.0.3   # DN2026_0123 D7 — CAST 키프레임 fal CDN 업로드(upload_file lifecycle)

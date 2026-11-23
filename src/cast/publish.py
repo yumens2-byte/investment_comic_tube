@@ -71,6 +71,9 @@ def cast_episode_metadata(plan_doc: dict, episode_no: int, thumbnail: str | None
     if tier not in TIER_THEME:
         raise PublishBlocked(f"알 수 없는 tier={tier!r}")
     snapshot = plan_doc.get("market_snapshot") or {}
+    # DN2026_0123 D4 · R6-13: 대체 훅("이번 주 …")은 주간 누적 지표만(없으면 일간 — 기존 동작)
+    fact_snapshot = {k: v for k, v in (plan_doc.get("fact_snapshot") or {}).items()
+                     if isinstance(v, dict) and v.get("change_basis") == "week"} or snapshot
     hook, takeaway = script_hook_takeaway(plan_doc)
     return {
         "theme": TIER_THEME[tier],
@@ -86,7 +89,7 @@ def cast_episode_metadata(plan_doc: dict, episode_no: int, thumbnail: str | None
         "skip_thumbnail": True,
         "skip_playlist": True,
         # DN2026_0115: 대본 있으면 훅=첫 비트, takeaway=RESOLVE 비트(없으면 기존 문구)
-        "storyboard": [{"narration": hook or build_hook(snapshot)}, {"narration": takeaway or TAKEAWAY}],
+        "storyboard": [{"narration": hook or build_hook(fact_snapshot)}, {"narration": takeaway or TAKEAWAY}],
     }
 
 

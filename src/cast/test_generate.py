@@ -593,3 +593,89 @@ def test_prior_cost_judged_on_fitted_not_worst_case(script_env, monkeypatch):
     monkeypatch.setattr(G, "generate_cut", fake)
     gen_main.main()
     assert script_env["add"] == [0.3, 0.3, 0.3]
+
+
+# ── DN2026_0123 D7 키프레임 연결 ─────────────────────────────────────────
+
+import src.cast.keyframe as KF
+
+
+def _kf_env(script_env, monkeypatch, n=3, mode="shadow"):
+    script_env["write_script"](n, mode)
+    monkeypatch.setenv("GEMINI_API_KEY", "g-key")
+    monkeypatch.delenv("CAST_KEYFRAME_ENABLED", raising=False)
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": f"{out}/n{b['cut']}.wav", "sec": 3.0, "tempo": 1.0, "cut_sec": 6} for b in beats])
+    monkeypatch.setattr(KF, "_make_client", lambda key: object())
+    requests = []
+    fake = _fake_cut([])
+
+    def cut(request, out, **k):
+        requests.append(request)
+        return fake(request, out, **k)
+    monkeypatch.setattr(G, "generate_cut", cut)
+    return requests
+
+
+def test_keyframes_used_as_first_frame_and_costed(script_env, monkeypatch):
+    requests = _kf_env(script_env, monkeypatch)
+    order = []
+
+    def mk(cut, sit, canon, axis, out_dir, *, client, fal_key, on_attempt=None):
+        on_attempt()
+        order.append(("kf", cut["cut"]))
+        return {"cut": int(cut["cut"]), "url": f"https://cdn/k{cut['cut']}.png", "path": "x",
+                "size": [768, 1376], "attempts": 1}
+    monkeypatch.setattr(KF, "make_keyframe", mk)
+    gen_main.main()
+    assert [r["image_url"] for r in requests] == ["https://cdn/k1.png", "https://cdn/k2.png", "https://cdn/k3.png"]
+    assert script_env["add"][:3] == [KF.KEYFRAME_PRICE_USD] * 3 and script_env["add"][3:] == [0.36] * 3
+    led = script_env["ledger"]()
+    assert led["keyframe_cost_usd"] == round(3 * KF.KEYFRAME_PRICE_USD, 3)
+    assert led["total_cost_usd"] == round(3 * KF.KEYFRAME_PRICE_USD + 1.08, 3)
+    assert [k["ok"] for k in led["keyframes"]] == [True] * 3
+
+
+def test_keyframe_failure_falls_back_villain_only_none(script_env, monkeypatch, caplog):
+    requests = _kf_env(script_env, monkeypatch)
+    monkeypatch.setattr(KF, "make_keyframe", lambda *a, **k: (_ for _ in ()).throw(KF.KeyframeError("keyframe_failed")))
+    with caplog.at_level("WARNING", logger="cast.generate_main"):
+        gen_main.main()
+    assert [r.get("image_url") for r in requests] == [None, None, None]   # 빌런 단독 컷(Debt Titan) → 현행
+    assert "keyframe_missing_villain_only cut=1" in caplog.text
+    assert script_env["mark"][-1][0] == "generated"
+
+
+def test_keyframe_cost_cap_skips_rest(script_env, monkeypatch):
+    requests = _kf_env(script_env, monkeypatch)
+    monkeypatch.setattr(NR, "synthesize", lambda beats, out, **k: [
+        {"cut": b["cut"], "wav": f"{out}/n{b['cut']}.wav", "sec": 3.0, "tempo": 1.0, "cut_sec": 10} for b in beats])
+    monkeypatch.setenv("CAST_RUN_CAP_USD", "1.90")   # fal 1.80 + 키프레임 1장(0.067) 까지만
+    calls = []
+
+    def mk(cut, sit, canon, axis, out_dir, *, client, fal_key, on_attempt=None):
+        on_attempt()
+        calls.append(cut["cut"])
+        return {"cut": int(cut["cut"]), "url": f"https://cdn/k{cut['cut']}.png", "path": "x",
+                "size": [768, 1376], "attempts": 1}
+    monkeypatch.setattr(KF, "make_keyframe", mk)
+    gen_main.main()
+    assert calls == [1]
+    assert [r.get("image_url") for r in requests] == ["https://cdn/k1.png", None, None]
+
+
+def test_keyframe_disabled_switch(script_env, monkeypatch):
+    requests = _kf_env(script_env, monkeypatch)
+    monkeypatch.setenv("CAST_KEYFRAME_ENABLED", "false")
+    monkeypatch.setattr(KF, "make_keyframe", lambda *a, **k: pytest.fail("키프레임 호출"))
+    gen_main.main()
+    assert script_env["ledger"]()["keyframe_cost_usd"] == 0.0 and len(requests) == 3
+
+
+def test_keyframe_dry_run_plan_only(script_env, monkeypatch):
+    script_env["write_script"](3, "dry_run")
+    monkeypatch.setattr(KF, "make_keyframe", lambda *a, **k: pytest.fail("키프레임 호출"))
+    monkeypatch.setattr(KF, "_make_client", lambda *a, **k: pytest.fail("genai 호출"))
+    gen_main.main()
+    plan = script_env["ledger"]()["keyframe_plan"]
+    assert [p["cut"] for p in plan] == [1, 2, 3] and all(p["prompt_chars"] > 0 for p in plan)

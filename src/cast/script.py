@@ -25,7 +25,10 @@ logger = logging.getLogger("cast.script")
 SCRIPT_VERSION = 3  # DN2026_0122: 비트별 characters(D6) 추가 / DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 # DN2026_0116: 실측 낭독 속도 초당 약 3.1자(shadow run 44133047259, 30자=9.68초) — 컷 최대 10초 기준
-MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후)
+MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후, 일간 토큰)
+# DN2026_0123 A안: 주간 토큰('이번 주' 접두)일 때만 34자. DN2026_0121 실측(대사만 초당 4.2~5.8자) 기준 약 6~8초
+MAX_RESOLVED_WEEK_CHARS = 34
+WEEK_PREFIX = "이번 주"
 MAX_PLAIN_CHARS = 24           # 그 외 비트(토큰 금지)
 MAX_SITUATION_WORDS = 45
 # DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
@@ -154,6 +157,13 @@ def _subj(word: str) -> str:
     return word + particle_for(word, "이")
 
 
+def _is_week_token(line: str, snapshot: dict) -> bool:
+    """줄의 수치 토큰이 모두 주간 누적 지표인지(R6-13 치명: 지표 단위 판정)."""
+    tokens = list(market_facts.TOKEN.finditer(line or ""))
+    return bool(tokens) and all(m[2] == "change_pct" and (snapshot.get(m[1]) or {}).get("change_basis") == "week"
+                                for m in tokens)
+
+
 def fact_token(axis: str, snapshot: dict) -> str | None:
     """축 대표키 change_pct 토큰 → SPX → None(숫자 없는 문장)."""
     for key in (AXIS_FACT_KEY.get(axis), "SPX"):
@@ -209,6 +219,8 @@ def template_line(role: str, index: int, decision: dict, snapshot: dict, cut: di
     banned = banned_lines(decision)
     payoff = _PAYOFF.get(decision.get("omen_payoff") or "", "")
     token = fact_token(axis, snapshot) if index == 0 else None
+    if token and _is_week_token(token, snapshot):
+        token = f"{WEEK_PREFIX} {token}"   # DN2026_0123 D4 · R6-13: 그 지표 값이 주간 누적일 때만
     if role == "ESTABLISH_THREAT":
         # R4-06: 게이트 대체(캐논 빌런 부재로 Debt Titan)면 축의 공격 형태를 밝혀 지표와 빌런을 맞춘다
         gated = decision["villain"] == "Debt Titan" and axis != "rates"
@@ -313,18 +325,32 @@ def _call(client, prompt: str) -> str:
     return getattr(resp, "text", None) or ""
 
 
+# DN2026_0123 진단 run 45139412545: LEV-01 페르소나의 '세 배'를 Gemini 가 대사로 옮겨
+# unregistered_market_numeric_claim(수량 주장) 위반 — 프롬프트에 넣을 때만 수량어를 '몇 배'로 바꾼다(캐논 데이터 무변경)
+_QUANTITY = re.compile(r"(?<![가-힣])(?:한|두|세|네|다섯|여섯|일곱|여덟|아홉|열)\s*배")
+
+
+def _persona_safe(text: str) -> str:
+    return _QUANTITY.sub("몇 배", text or "")
+
+
+def _limit_for(index: int) -> str:
+    return "토큰 포함 30자(주간 토큰이면 '이번 주' 포함 34자)" if index == 0 else "24자"
+
+
 def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
     chars = canon["characters"]
     cast = sorted({c for cut in plan for c in cut["characters"]})
-    persona = "\n".join(f"- {c}: {chars[c]['persona_kr']}" for c in cast
+    persona = "\n".join(f"- {c}: {_persona_safe(chars[c]['persona_kr'])}" for c in cast
                         if c in chars and chars[c].get("persona_kr"))
     forms = (chars.get(decision["villain"]) or {}).get("attack_forms_en") or {}
     ending = ENDING_SPECS.get(str(decision["ending_type"]).upper(), {})
     payoff = {"hit": "지난 회 예고가 적중 — 2번 비트에 '예고대로'를 넣는다.",   # DN2026_0116 R6-03
               "twist": "지난 회 예고가 빗나감 — 2번 비트에 '예상 밖'을 넣는다."}.get(
         decision.get("omen_payoff") or "", "지난 회 예고 없음.")
-    beats = "\n".join(f"- cut {c['cut']} {c['role']} (기본 출연: {', '.join(c['characters'])}): "
-                      f"{ROLE_PURPOSE.get(c['role'], '')}" for c in plan)
+    beats = "\n".join(f"- cut {c['cut']} {c['role']} (기본 출연: {', '.join(c['characters'])}, "
+                      f"narration 최대 {_limit_for(i)}): {ROLE_PURPOSE.get(c['role'], '')}"
+                      for i, c in enumerate(plan))
     unresolved = decision.get("prev_unresolved") or (((prev or {}).get("story_state") or {}).get("unresolved"))
     act = decision.get("act") or "INTRO"
     recap = decision.get("prev_recap") or {}
@@ -348,11 +374,12 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
         f"[마무리 형식] {decision['ending_type']} — {ending.get('guide', '')}\n"
         f"[비트 계약]\n{beats}\n"
         "[narration 규칙] 각 비트 한 문장. 해설과 캐릭터 대사(“…” 인용형)를 섞고 인용형은 2개 비트. "
-        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하), "
+        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하, 주간 지표 토큰이면 '이번 주' 포함 34자 이하), "
         "나머지 비트는 숫자·토큰 없이 24자 이하(낭독 시간 제한). 복선 회수(예고대로/예상 밖)는 2번 비트에. "
         "투자 권유·수익 보장·매수/매도 지시 금지. "
+        "수량 표현(세 배·두 배 등)과 숫자(시즌·주차 번호 포함) 금지 — '크게', '몇 배'로 쓴다. "
         "지어낸 수치 금지."
-        f"{market_facts.prompt_contract(snapshot)}\n"
+        f"{market_facts.prompt_contract(snapshot)}{decision.get('weekly_note') or ''}\n"
         "[situation_en 규칙] 영어 40단어 이하, 1액션 1카메라무브. 캐릭터 외형 묘사 금지(고정 블록이 따로 붙음). "
         "화면 텍스트·숫자·글자 금지. characters 의 모든 캐릭터를 영문 이름으로 반드시 언급"
         f"({hero_names}, 빌런은 영문 이름).\n"
@@ -395,7 +422,10 @@ def resolve_characters(item: dict | None, cut: dict) -> list[str]:
     raw = (item or {}).get("characters")
     if cut.get("role") == "TURN" or not isinstance(raw, list):
         return base
-    picked = list(dict.fromkeys(str(c).strip() for c in raw if str(c).strip()))
+    # DN2026_0123 shadow 45135210910: Gemini 가 코드 대신 영문 이름(Leverage Muscle Man)을 돌려줘 폴백 — 이름도 코드로
+    by_name = {v.lower(): k for k, v in SCREEN_NAME_EN.items()}
+    picked = list(dict.fromkeys(by_name.get(str(c).strip().lower(), str(c).strip())
+                                for c in raw if str(c).strip()))
     villains = [c for c in base if c not in HEROES]
     heroes_ok = confirmed_heroes()   # R6-12 (d): REF CONFIRMED 히어로만(cast_for_tier fail-closed 이후 변경이므로)
     ok = (1 <= len(picked) <= 2
@@ -428,8 +458,16 @@ def check_beat(item: dict | None, snapshot: dict, allow_token: bool = True,
         resolved = market_facts.resolve(line, snapshot)
     except Exception as e:  # noqa: BLE001 — 사유 반환(위반 처리)
         return f"resolve_failed:{type(e).__name__}", None
-    if len(resolved) > (MAX_RESOLVED_CHARS if allow_token else MAX_PLAIN_CHARS):
-        return "narration_too_long", None
+    # DN2026_0123 · R6-13: '이번 주'는 주간 누적 토큰과만, 34자도 그때만
+    week = allow_token and _is_week_token(line, snapshot)
+    has_token = bool(market_facts.TOKEN.search(line))
+    if has_token and week and not resolved.startswith(WEEK_PREFIX):
+        return "week_prefix_missing", None
+    if has_token and not week and WEEK_PREFIX in resolved:
+        return "week_prefix_on_daily", None
+    limit = (MAX_RESOLVED_WEEK_CHARS if week else MAX_RESOLVED_CHARS) if allow_token else MAX_PLAIN_CHARS
+    if len(resolved) > limit:
+        return f"narration_too_long:{len(resolved)}>{limit}자", None   # 수정 요청에 실제 길이 전달
     if FORBIDDEN.search(resolved):
         return "forbidden_phrase", None
     if not ALLOWED_CHARS.match(resolved):
@@ -479,7 +517,12 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
         results = _evaluate(_call(client, prompt), plan, snapshot, banned)
         bad = {c: r[1] for c, r in results.items() if r[1]}
         if bad:
-            logger.warning("script_violation attempt=1 cuts=%s", sorted(bad))
+            # DN2026_0123: 사유 코드(내부 상수, 본문 아님)를 남겨 위반 원인을 운영 로그로 추적
+            logger.warning("script_violation attempt=1 cuts=%s reasons=%s", sorted(bad),
+                           {c: str(r).split(":")[0] for c, r in sorted(bad.items())})
+            for c in sorted(bad):   # 위반 문장(공개될 내레이션 후보, 키·식별자 없음) 앞 40자 — 원인 추적용
+                logger.info("script_violation_line cut=%s line=%r", c,
+                            str((results[c][0] or {}).get("narration") or "")[:40])
             repair = prompt + "\n[위반 수정 요청] " + "; ".join(f"cut {c}: {r}" for c, r in sorted(bad.items())) \
                 + " — 규칙을 지켜 전체 배열을 다시 출력하라."
             try:
@@ -508,6 +551,8 @@ def build_script(tier: str, plan: list[dict], market_data: dict, decision: dict,
                           "situation_en": str(item["situation_en"]).strip(), "characters": chars})
         used.add(beats[-1]["narration"])
     if replaced:
-        logger.warning("script_template_replaced cuts=%s", replaced)
+        logger.warning("script_template_replaced cuts=%s reasons=%s", replaced,
+                       {c: str(results[c][1]).split(":")[0] for c in replaced if results[c][1]}
+                       | {c: "duplicate_line_after_merge" for c in replaced if not results[c][1]})
     return {"version": SCRIPT_VERSION, "source": "gemini+template" if replaced else "gemini",
             "ending_type": decision["ending_type"], "beats": beats}

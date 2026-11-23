@@ -195,7 +195,7 @@ def test_gemini_invalid_json_then_ok(client, t3):
     ("지금 팔아라", "forbidden_phrase"),
     ("금리가 세 배로 뛴다", "unregistered_market_numeric_claim"),
     ("{{FACT:OIL.change_pct}} 기름이 끓는다", "resolve_failed:ValidationError"),
-    ("가" * 37, "narration_too_long"),
+    ("가" * 37, "narration_too_long:37>30자"),
 ])
 def test_check_beat_blocks(line, reason):
     item = {"cut": 1, "narration": line, "situation_en": "A calm push in."}
@@ -386,3 +386,34 @@ def test_merge_duplicate_rechecked(client):
     s = C.build_script("T2", t2, SNAP, decision(), None, "live")
     lines = [b["narration"] for b in s["beats"]]
     assert lines.count("같은 문장이다") == 1 and len(set(lines)) == len(lines)
+
+
+def test_resolve_characters_accepts_english_names(t3):
+    """DN2026_0123 shadow: Gemini 가 'Leverage Muscle Man' 처럼 이름으로 돌려줘도 코드로 받는다."""
+    cut = t3[1]
+    assert C.resolve_characters({"characters": ["Leverage Muscle Man", "EDT"]}, cut) == ["LEV-01", "EDT"]
+    assert C.resolve_characters({"characters": ["Volatility Hydra", "Exposure Futures Girl"]},
+                                dict(t3[3], characters=["Volatility Hydra", "FG-01"])) == ["Volatility Hydra", "FG-01"]
+
+
+def test_violation_reasons_logged(client, t3, caplog):
+    client([good_beats(t3, c3="금리 5% 돌파한다"), good_beats(t3)])
+    with caplog.at_level("WARNING", logger="cast.script"):
+        C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert "reasons={3: 'unregistered_market_numeric_claim'}" in caplog.text
+
+
+def test_violation_line_logged(client, t3, caplog):
+    client([good_beats(t3, c3="금리 5% 돌파한다"), good_beats(t3)])
+    with caplog.at_level("INFO", logger="cast.script"):
+        C.build_script("T3", t3, SNAP, decision(), None, "shadow")
+    assert "script_violation_line cut=3 line='금리 5% 돌파한다'" in caplog.text
+
+
+
+def test_prompt_persona_quantity_sanitized_and_limits(t3):
+    """DN2026_0123 진단: LEV-01 페르소나 '세 배' → 프롬프트에선 '몇 배', 비트별 글자 상한 표기."""
+    p = C.build_prompt("T3", t3, SNAP, decision(), None, C.load_cast_canon())
+    assert "LEV-01: 힘을 몇 배로 키우지만 추락도 몇 배라는" in p
+    assert "narration 최대 24자" in p and "narration 최대 토큰 포함 30자" in p
+    assert market_facts.check_line(C._persona_safe("힘을 세 배로 키우지만 추락도 세 배라는")) is None
