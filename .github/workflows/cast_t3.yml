@@ -114,6 +114,8 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           CAST_TTS_MODEL: ${{ vars.CAST_TTS_MODEL || 'gemini-3.8-flash-tts' }}
           TTS_VOICE: ${{ vars.CAST_TTS_VOICE || 'Charon' }}
+          # DN2026_0123 D7 — 장면 키프레임(gemini-3.1-flash-image 9:16 1K → fal 업로드 1일). 'false' 만 끔(비상 정지)
+          CAST_KEYFRAME_ENABLED: ${{ vars.CAST_KEYFRAME_ENABLED || 'true' }}
         run: |
           export PYTHONPATH=$(pwd)
           mkdir -p artifacts_cast

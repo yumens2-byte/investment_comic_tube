@@ -110,3 +110,15 @@ dry_run·shadow·live 외의 값은 dry_run으로 강등된다(src/cast/mode.py)
 ## 테스트
 
 `PYTHONPATH=. python -m pytest -q src/cast/` — 273 passed (2026-11-18, 기준 e3745a2의 41에서 증가).
+
+## B단계 주간 데이터·장면 키프레임 (v1.4.0, DN2026_0123)
+
+- **주간 데이터**(`weekly.py`, plan):
+  - 지표 5개(TNX·VIX·NASDAQ·SPX·DXY)의 1개월 일봉을 따로 받아 이번 주 누적 등락, 주중 최대 변동일, 주간 폭을 계산한다. 공용 collector·market_regime·market_facts는 수정하지 않는다(일간 스냅샷 지문 보호).
+  - 주간 마지막 종가·관측일이 일간 스냅샷과 다르면 그 지표는 일간 값을 쓴다. 수집 실패도 일간 값으로 진행한다.
+  - 빌런 점수와 첫 비트 수치 토큰은 등락률만 주간 누적으로 바꾼 사본(`fact_snapshot`)으로 판정한다. 첫 비트는 "이번 주 …"로 시작하고 상한은 34자다. 원장 `market_snapshot`은 일간 그대로다.
+- **장면 키프레임**(`keyframe.py`, generate):
+  - 컷마다 화면 히어로 REF(최대 4장) + 캐논 외형 + 장면 설명으로 gemini-3.1-flash-image(9:16, 1K)를 생성하고 `fal_client.upload_file`(만료 1일)로 올려 i2v 첫 프레임으로 쓴다. fal H3는 이미지가 없으면 16:9 text-to-video로 처리한다.
+  - 1회 재시도 후 실패하면 히어로 컷은 REF 원본, 빌런 단독 컷은 이미지 없이 진행하고 경고를 남긴다. 키프레임 단계는 최대 600초.
+  - 장당 $0.067을 호출 직전 원장에 가산한다(cost_usd numeric(8,2)라 $0.07로 저장). 남은 fal 예상비와 합쳐 회당·월 상한을 넘으면 그 장부터 생략한다.
+  - 비상 정지: `vars.CAST_KEYFRAME_ENABLED=false`. 컷 해상도는 `cut_size` 로그로 남긴다.

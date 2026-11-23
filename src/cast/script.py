@@ -25,7 +25,8 @@ logger = logging.getLogger("cast.script")
 SCRIPT_VERSION = 3  # DN2026_0122: 비트별 characters(D6) 추가 / DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 # DN2026_0116: 실측 낭독 속도 초당 약 3.1자(shadow run 44133047259, 30자=9.68초) — 컷 최대 10초 기준
-MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후)
+# DN2026_0123 A안: '이번 주' 접두 → 첫 비트 30→34자. DN2026_0121 실측(대사만 초당 4.2~5.8자) 기준 약 6~8초
+MAX_RESOLVED_CHARS = 34        # 지표 토큰이 있는 첫 비트(대입 후)
 MAX_PLAIN_CHARS = 24           # 그 외 비트(토큰 금지)
 MAX_SITUATION_WORDS = 45
 # DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
@@ -209,6 +210,8 @@ def template_line(role: str, index: int, decision: dict, snapshot: dict, cut: di
     banned = banned_lines(decision)
     payoff = _PAYOFF.get(decision.get("omen_payoff") or "", "")
     token = fact_token(axis, snapshot) if index == 0 else None
+    if token and decision.get("fact_basis") == "week":
+        token = f"이번 주 {token}"   # DN2026_0123 D4: 토큰 값이 주간 누적
     if role == "ESTABLISH_THREAT":
         # R4-06: 게이트 대체(캐논 빌런 부재로 Debt Titan)면 축의 공격 형태를 밝혀 지표와 빌런을 맞춘다
         gated = decision["villain"] == "Debt Titan" and axis != "rates"
@@ -348,11 +351,11 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
         f"[마무리 형식] {decision['ending_type']} — {ending.get('guide', '')}\n"
         f"[비트 계약]\n{beats}\n"
         "[narration 규칙] 각 비트 한 문장. 해설과 캐릭터 대사(“…” 인용형)를 섞고 인용형은 2개 비트. "
-        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하), "
+        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 34자 이하), "
         "나머지 비트는 숫자·토큰 없이 24자 이하(낭독 시간 제한). 복선 회수(예고대로/예상 밖)는 2번 비트에. "
         "투자 권유·수익 보장·매수/매도 지시 금지. "
         "지어낸 수치 금지."
-        f"{market_facts.prompt_contract(snapshot)}\n"
+        f"{market_facts.prompt_contract(snapshot)}{decision.get('weekly_note') or ''}\n"
         "[situation_en 규칙] 영어 40단어 이하, 1액션 1카메라무브. 캐릭터 외형 묘사 금지(고정 블록이 따로 붙음). "
         "화면 텍스트·숫자·글자 금지. characters 의 모든 캐릭터를 영문 이름으로 반드시 언급"
         f"({hero_names}, 빌런은 영문 이름).\n"

@@ -55,7 +55,7 @@ def main() -> None:
     if beats and narration:
         captions = [b["narration"] for b in sorted(beats, key=lambda b: int(b["cut"]))]
         composed = compose(cuts, plan_doc.get("villain"), OUT_PATH, narration=narration,
-                           captions=captions, market_snapshot=plan_doc.get("market_snapshot"))
+                           captions=captions, market_snapshot=plan_doc.get("fact_snapshot") or plan_doc.get("market_snapshot"))   # DN2026_0123 D4
     else:
         if beats and not narration:
             # R6-05 #7: 대본이 있는데 내레이션이 없으면 무내레이션 발행 금지(부분 생성물 차단과 동일 원칙)

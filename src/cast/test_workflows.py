@@ -122,3 +122,15 @@ def test_publish_caption_font_after_ffmpeg(t3):
     font = next(i for i, r in enumerate(runs) if "install_caption_font.py" in r)
     assert font == ff + 1 and runs[font].strip() == "sudo python3 scripts/install_caption_font.py"
     assert _step_env(t3["jobs"]["publish"], "합성·발행")["CAPTION_LAYOUT_POLICY"] == "caption-layout-v1"
+
+
+def test_generate_keyframe_switch_default_on(t3):
+    """DN2026_0123 D7 — 키프레임 스위치(vars 미등록 = 켜짐), Gemini·fal 키가 같은 단계에 주입."""
+    env = _step_env(t3["jobs"]["generate"], "fal i2v 생성")
+    assert env["CAST_KEYFRAME_ENABLED"] == "${{ vars.CAST_KEYFRAME_ENABLED || 'true' }}"
+    assert "GEMINI_API_KEY" in env and "FAL_AI_KEY" in env
+
+
+def test_requirements_pin_fal_client():
+    with open(os.path.join(ROOT, "requirements.txt")) as f:
+        assert "fal-client==1.0.3" in f.read()

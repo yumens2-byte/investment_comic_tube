@@ -257,9 +257,24 @@ def generate_cut(request: dict, out_path: str, *, cut_no: int, deadline_ts: floa
             logger.warning("cut_resubmit cut=%d attempt=%d reason=%s", cut_no, attempts, e)
     _download(video_url, out_path)
     duration = _probe_duration(out_path)
+    size = _probe_size(out_path)   # DN2026_0123: 컷 해상도 관찰(빌런 단독 16:9 여부)
+    logger.info("cut_size cut=%d size=%s", cut_no, size)
     return {"cut": cut_no, "path": out_path, "duration_sec": duration,
             "cost_usd": estimate_cost(duration), "request_id": sub["request_id"],
-            "attempts": attempts}
+            "attempts": attempts, "size": size}
+
+
+def _probe_size(path: str) -> str | None:
+    """ffprobe 해상도 'WxH'. 실패는 None(관찰용, 차단하지 않음). # DN2026_0123"""
+    import subprocess
+    try:
+        r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
+                            "stream=width,height", "-of", "csv=s=x:p=0", path],
+                           capture_output=True, text=True, timeout=PROBE_TIMEOUT_SEC, check=False)
+        out = (r.stdout or "").strip()
+        return out if r.returncode == 0 and "x" in out else None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def _probe_duration(path: str) -> float:
