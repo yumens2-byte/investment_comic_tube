@@ -73,7 +73,7 @@ def test_plan_uses_weekly_for_villain_and_token(monkeypatch):
     daily = P.build_plan(DATA, "dry_run", "r1", "2026-11-21", "T3")
     assert daily["fact_basis"] == "day" and not daily["script"]["beats"][0]["narration"].startswith("이번 주")
     # 주간으로는 나스닥·S&P 가 크게 올랐다 → 과열 축
-    weekly = {k: {"week_change_pct": 4.5} for k in ("SPX", "NASDAQ")}
+    weekly = {k: {"week_change_pct": 4.5, "week_sessions": 1} for k in ("SPX", "NASDAQ")}
     doc = P.build_plan(DATA, "dry_run", "r1", "2026-11-21", "T3", weekly=weekly)
     assert doc["fact_basis"] == "week" and doc["axis"] == "momentum" and doc["villain"] == "Algorithm Reaper"
     first = doc["script"]["beats"][0]["narration"]
@@ -97,16 +97,62 @@ def test_longest_weekly_first_beats_fit_and_layout():
     from src.caption_layout import build_layout
     font = _font_ok()
     from src.cast.casting import cast_for_tier
-    snap = {k: {"close": 1.0, "change_pct": -12.34} for k in market_facts.KEYS}
+    snap = {k: {"close": 1.0, "change_pct": -12.34, "change_basis": "week"} for k in market_facts.KEYS}
     villains = {"rates": ["Debt Titan"], "volatility": ["Volatility Hydra", "Debt Titan"],
                 "momentum": ["Algorithm Reaper", "Debt Titan"]}
     for tier in ("T1", "T3"):
         cut = cast_for_tier(tier)[0]
         for axis, names in villains.items():
             for v in names:
-                d = {"villain": v, "axis": axis, "fact_basis": "week", "act": "INTRO", "season_no": 1,
+                d = {"villain": v, "axis": axis, "act": "INTRO", "season_no": 1,
                      "season_week": 1}
                 line = market_facts.resolve(C.template_line(cut["role"], 0, d, snap, cut), snap)
-                assert line.startswith("이번 주 ") and len(line) <= C.MAX_RESOLVED_CHARS, line
+                assert line.startswith("이번 주 ") and len(line) <= C.MAX_RESOLVED_WEEK_CHARS, line
                 if font:
                     assert build_layout(line, [C.villain_kr(v)])
+
+
+# ---------- R6-13 ----------
+
+def test_mixed_basis_no_week_prefix_on_daily_token():
+    """치명: 주간 지표가 TNX 뿐이면 나스닥(일간) 토큰에 '이번 주'를 붙이지 않는다."""
+    import src.cast.script as C
+    d = {k: {"close": 100.0, "change_pct": -0.5} for k in W.WEEK_KEYS}
+    v = W.weekly_view(d, {"TNX": {"week_change_pct": 1.2}})
+    dec = {"villain": "Algorithm Reaper", "axis": "momentum", "act": "INTRO", "omen_payoff": None,
+           "prev_lines": [], "season_no": 1, "season_week": 1}
+    line = market_facts.resolve(C.template_line("ESTABLISH_THREAT", 0, dec, v, {"characters": []}), v)
+    assert line == "나스닥 0.50% 하락, 알고리즘리퍼 등장"
+    rates = market_facts.resolve(C.template_line("ESTABLISH_THREAT", 0, dict(dec, villain="Debt Titan",
+                                                                             axis="rates"), v, {"characters": []}), v)
+    assert rates.startswith("이번 주 미 10년물 금리 1.20% 상승")
+    assert "나스닥" not in W.prompt_note({"TNX": {"week_change_pct": 1.2}})
+
+
+def test_check_beat_week_prefix_rules():
+    import src.cast.script as C
+    v = W.weekly_view({"VIX": {"close": 20.0, "change_pct": 1.0}, "SPX": {"close": 1.0, "change_pct": -1.0}},
+                      {"VIX": {"week_change_pct": 12.0}})
+    sit = "The villain looms."
+    ok = {"narration": "이번 주 {{FACT:VIX.change_pct}}, 공포가 깨어났다", "situation_en": sit}
+    assert C.check_beat(ok, v)[0] is None
+    assert C.check_beat({"narration": "{{FACT:VIX.change_pct}}, 공포가 깨어났다", "situation_en": sit},
+                        v)[0] == "week_prefix_missing"
+    assert C.check_beat({"narration": "이번 주 {{FACT:SPX.change_pct}}, 공포가 깨어났다", "situation_en": sit},
+                        v)[0] == "week_prefix_on_daily"
+    long_daily = {"narration": "{{FACT:SPX.change_pct}}, 볼래틸리티히드라가 깨어났다", "situation_en": sit}
+    assert C.check_beat(long_daily, v)[0] == "narration_too_long"     # 일간은 30자 유지
+    assert C.check_beat({"narration": "이번 주 시장이 흔들렸다", "situation_en": sit}, v, allow_token=False)[0] is None
+
+
+def test_scoring_view_sqrt_normalized_and_short_week_skipped():
+    v = W.scoring_view({"SPX": {"close": 1.0, "change_pct": 0.1}}, {"SPX": {"week_change_pct": 4.0, "week_sessions": 4}})
+    assert v["SPX"]["change_pct"] == 2.0 and "change_basis" not in v["SPX"]
+    monday = [p for p in SERIES if p[0] <= date(2026, 11, 16)]
+    snap = {k: {"close": 101.0, "observed_date": "2026-11-16"} for k in W.WEEK_KEYS}
+    assert W.fetch_weekly(snap, fetch=lambda t, c: monday) == {}      # 1세션 주는 제외
+
+
+def test_prompt_note_particle():
+    note = W.prompt_note({"NASDAQ": W.summarize(SERIES, date(2026, 11, 20))})
+    assert "나스닥은" in note and "나스닥는" not in note

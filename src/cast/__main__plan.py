@@ -40,9 +40,15 @@ def build_plan(data: dict, mode: str, run_id: str, run_date_kst: str, tier_force
     prev = (ledger.fetch_last_story(include_generated=(mode == "shadow"), exclude_run_id=run_id)
             if mode in ("shadow", "live") else None)   # DB 오류 시 예외 전파(fail-closed)
     weekly = weekly or {}
-    view = cast_weekly.weekly_view(data, weekly)   # DN2026_0123 D4: 등락률만 주간 누적
-    decision = storyline.decide(view, prev, run_date_kst=run_date_kst)
-    decision["fact_basis"] = "week" if weekly else "day"
+    view = cast_weekly.weekly_view(data, weekly)   # DN2026_0123 D4: 등락률만 주간 누적(토큰·자막·훅)
+    scoring = cast_weekly.scoring_view(data, weekly)   # R6-13: 점수는 √세션 정규화
+    decision = storyline.decide(scoring, prev, run_date_kst=run_date_kst)
+    if weekly:
+        from src.market_regime import select_villain
+        daily_raw, _t, daily_scores = select_villain(data, None)
+        logger.info("[CAST] villain_scores_compare daily=%s(%s) weekly=%s(%s)", daily_raw, daily_scores,
+                    decision["villain_raw"], decision["villain_scores"])
+    decision["fact_basis"] = "week" if cast_weekly.week_keys(view) else "day"
     decision["weekly_note"] = cast_weekly.prompt_note(weekly)
     plan = cast_for_tier(tier, villain=decision["villain"])
     plan = storyline.apply_focus(plan, decision["hero_focus"])

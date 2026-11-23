@@ -94,13 +94,13 @@ def _image_url_for(cut: dict, refs: dict) -> str | None:
     return image_url
 
 
-def _first_frame(cut: dict, refs: dict, keyframes: dict) -> str | None:
+def _first_frame(cut: dict, refs: dict, keyframes: dict, warn: bool = True) -> str | None:
     """DN2026_0123 D7: 키프레임 URL 우선, 없으면 기존 규칙(히어로 REF 원본 / 빌런 단독 None)."""
     url = keyframes.get(int(cut["cut"]))
     if url:
         return url
     fallback = _image_url_for(cut, refs)
-    if fallback is None:
+    if fallback is None and warn:
         logger.warning("keyframe_missing_villain_only cut=%s — 이미지 없이 제출(16:9 t2v 가능)", cut["cut"])
     return fallback
 
@@ -138,8 +138,9 @@ def _make_keyframes(plan, beat_of, canon, axis, omen_axis, state, *, prior, spen
         _write_ledger(state)
 
     urls: dict[int, str] = {}
+    kf_start = time.time()   # R6-13: 키프레임 단계 자체 시각 기준(TTS 소요와 무관)
     for cut in plan:
-        if time.time() - start > KEYFRAME_TIME_SHARE_SEC:
+        if time.time() - kf_start > KEYFRAME_TIME_SHARE_SEC:
             logger.warning("keyframe_time_share_exceeded cut=%s — 남은 컷 폴백", cut["cut"])
             break
         a = omen_axis if cut.get("role") == "NEXT_OMEN" and omen_axis else axis
@@ -268,7 +269,7 @@ def main() -> None:
             for cut in plan:
                 request = generate.build_fal_request(
                     _cut_prompt(cut, beat_of.get(int(cut["cut"])), canon, axis, plan_doc.get("omen_axis")),
-                    _first_frame(cut, refs, {}), min(cut_secs[int(cut["cut"])], 15))
+                    _first_frame(cut, refs, {}, warn=False), min(cut_secs[int(cut["cut"])], 15))
                 state["results"].append({"cut": cut["cut"], "mode": "dry_run",
                                          "request_keys": sorted(request),
                                          "prompt_chars": len(request["prompt"])})

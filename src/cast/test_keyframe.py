@@ -125,3 +125,30 @@ def test_fal_client_upload_signature():
     assert "lifecycle" in inspect.signature(fal_client.SyncClient.upload_file).parameters
     assert fal_client.StorageSettings(expires_in=K.UPLOAD_EXPIRES_IN)
     assert json.dumps(K.REF_FILES)
+
+
+def test_negatives_scoped_per_character():
+    p = K.build_prompt(["EDT", "LEV-01"], "EDT and Leverage Muscle Man run.", load_cast_canon(), None)
+    canon = load_cast_canon()["characters"]
+    for name in ("EDT", "LEV-01"):
+        if canon[name].get("negative_en"):
+            assert f"for {name} only:" in p
+
+
+def test_client_has_timeout(monkeypatch):
+    seen = {}
+
+    class FakeGenai:
+        @staticmethod
+        def Client(api_key, http_options):
+            seen["timeout"] = http_options.timeout
+            return object()
+    import sys
+    import types as pytypes
+
+    import google
+    monkeypatch.setitem(sys.modules, "google.genai", pytypes.SimpleNamespace(
+        Client=FakeGenai.Client, types=__import__("google.genai.types", fromlist=["x"])))
+    monkeypatch.setattr(google, "genai", sys.modules["google.genai"], raising=False)
+    K._make_client("k")
+    assert seen["timeout"] == K.REQUEST_TIMEOUT_MS

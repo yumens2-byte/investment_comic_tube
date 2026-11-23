@@ -71,7 +71,8 @@ def build_prompt(characters: list[str], situation_en: str, canon: dict, axis: st
         attack = (entry.get("attack_forms_en") or {}).get(axis or "") if name not in HEROES else None
         blocks.append(f"{text}, {attack.strip().rstrip('.')}." if attack else f"{text}.")
         if entry.get("negative_en"):
-            negatives.append(entry["negative_en"].strip().rstrip("."))
+            # R6-13: 캐릭터별 금지 사항은 그 캐릭터에만(같은 컷의 다른 캐릭터 외형과 충돌 방지)
+            negatives.append(f"for {name} only: {entry['negative_en'].strip().rstrip('.')}")
     prompt = f"{IMAGE_HEAD}{' '.join(blocks)} {situation}{IMAGE_TAIL}"
     if negatives:
         prompt += " Strictly: " + "; ".join(negatives) + "."
@@ -80,12 +81,19 @@ def build_prompt(characters: list[str], situation_en: str, canon: dict, axis: st
     return prompt
 
 
+REQUEST_TIMEOUT_MS = 90_000   # R6-13: 이미지 호출 1회 상한(무제한 대기 방지, HttpOptions 단위 ms)
+
+
 def _make_client(api_key: str):
     from google import genai  # 지연 import — dry_run·테스트 미요구
-    return genai.Client(api_key=api_key)
+    from google.genai import types
+    # R6-13: httpx INFO 로그(요청 URL)를 공개 Actions 로그에 남기지 않는다
+    for name in ("httpx", "httpcore"):
+        logging.getLogger(name).setLevel(logging.WARNING)
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(timeout=REQUEST_TIMEOUT_MS))
 
 
-def _generate_image(client, prompt: str, refs: list[str]) -> bytes:
+def _generate_image(client, prompt: str, refs: list[str]) -> tuple[bytes, str]:
     from google.genai import types
     contents: list = []
     for path in refs:
@@ -98,9 +106,11 @@ def _generate_image(client, prompt: str, refs: list[str]) -> bytes:
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(aspect_ratio="9:16", image_size="1K")))
     for part in getattr(resp, "parts", None) or []:
-        data = getattr(getattr(part, "inline_data", None), "data", None)
+        inline = getattr(part, "inline_data", None)
+        data = getattr(inline, "data", None)
         if data:
-            return data
+            mime = getattr(inline, "mime_type", None) or "image/png"
+            return data, (".jpg" if "jpeg" in mime else ".png")
     raise KeyframeError("no_inline_image")
 
 
@@ -132,17 +142,20 @@ def make_keyframe(cut: dict, situation_en: str, canon: dict, axis: str | None, o
         if on_attempt is not None:
             on_attempt()
         try:
-            data = _generate_image(client, prompt, refs)
+            data, ext = _generate_image(client, prompt, refs)
             size = _check_size(data)
         except KeyframeError as e:
             last = e
         except Exception as e:  # noqa: BLE001 — 외부 API 실패는 사유 유형만
             last = KeyframeError(type(e).__name__)
         else:
-            os.makedirs(out_dir, exist_ok=True)
-            path = os.path.join(out_dir, f"keyframe_{int(cut['cut']):02d}.png")
-            with open(path, "wb") as f:
-                f.write(data)
+            path = os.path.join(out_dir, f"keyframe_{int(cut['cut']):02d}{ext}")
+            try:
+                os.makedirs(out_dir, exist_ok=True)
+                with open(path, "wb") as f:
+                    f.write(data)
+            except OSError as e:   # R6-13: 저장 실패도 폴백(회차 실패 아님)
+                raise KeyframeError(f"save_failed {type(e).__name__}") from e
             try:
                 url = _upload(path, fal_key)
             except Exception as e:

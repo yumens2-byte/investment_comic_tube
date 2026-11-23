@@ -130,6 +130,7 @@ jobs:
           name: 'cast-cuts-${{ github.run_id }}'
           overwrite: true   # DN2026_0114 (R6-02 #10) 같은 run 재실행 attempt의 동명 artifact 충돌 방지
           path: artifacts_cast/
+          retention-days: 7   # DN2026_0123 R6-13: 키프레임 이미지 포함 — 공개 artifact 보관 7일
       - name: Upload generation ledger (리포트용 경량 원장)   # DN2026_0114
         if: always()
         uses: actions/upload-artifact@v5

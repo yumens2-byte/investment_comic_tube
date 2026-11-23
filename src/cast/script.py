@@ -25,8 +25,10 @@ logger = logging.getLogger("cast.script")
 SCRIPT_VERSION = 3  # DN2026_0122: 비트별 characters(D6) 추가 / DN2026_0116: 첫 비트 30자·토큰, 나머지 24자
 MAX_TEMPLATE_CHARS = 28        # 프롬프트 규칙: 토큰 제외 28자
 # DN2026_0116: 실측 낭독 속도 초당 약 3.1자(shadow run 44133047259, 30자=9.68초) — 컷 최대 10초 기준
-# DN2026_0123 A안: '이번 주' 접두 → 첫 비트 30→34자. DN2026_0121 실측(대사만 초당 4.2~5.8자) 기준 약 6~8초
-MAX_RESOLVED_CHARS = 34        # 지표 토큰이 있는 첫 비트(대입 후)
+MAX_RESOLVED_CHARS = 30        # 지표 토큰이 있는 첫 비트(대입 후, 일간 토큰)
+# DN2026_0123 A안: 주간 토큰('이번 주' 접두)일 때만 34자. DN2026_0121 실측(대사만 초당 4.2~5.8자) 기준 약 6~8초
+MAX_RESOLVED_WEEK_CHARS = 34
+WEEK_PREFIX = "이번 주"
 MAX_PLAIN_CHARS = 24           # 그 외 비트(토큰 금지)
 MAX_SITUATION_WORDS = 45
 # DN2026_0115 통합: "사라" 단독은 "사라진다" 등 일반어 오탐 → 명령형 어미로 한정
@@ -155,6 +157,13 @@ def _subj(word: str) -> str:
     return word + particle_for(word, "이")
 
 
+def _is_week_token(line: str, snapshot: dict) -> bool:
+    """줄의 수치 토큰이 모두 주간 누적 지표인지(R6-13 치명: 지표 단위 판정)."""
+    tokens = list(market_facts.TOKEN.finditer(line or ""))
+    return bool(tokens) and all(m[2] == "change_pct" and (snapshot.get(m[1]) or {}).get("change_basis") == "week"
+                                for m in tokens)
+
+
 def fact_token(axis: str, snapshot: dict) -> str | None:
     """축 대표키 change_pct 토큰 → SPX → None(숫자 없는 문장)."""
     for key in (AXIS_FACT_KEY.get(axis), "SPX"):
@@ -210,8 +219,8 @@ def template_line(role: str, index: int, decision: dict, snapshot: dict, cut: di
     banned = banned_lines(decision)
     payoff = _PAYOFF.get(decision.get("omen_payoff") or "", "")
     token = fact_token(axis, snapshot) if index == 0 else None
-    if token and decision.get("fact_basis") == "week":
-        token = f"이번 주 {token}"   # DN2026_0123 D4: 토큰 값이 주간 누적
+    if token and _is_week_token(token, snapshot):
+        token = f"{WEEK_PREFIX} {token}"   # DN2026_0123 D4 · R6-13: 그 지표 값이 주간 누적일 때만
     if role == "ESTABLISH_THREAT":
         # R4-06: 게이트 대체(캐논 빌런 부재로 Debt Titan)면 축의 공격 형태를 밝혀 지표와 빌런을 맞춘다
         gated = decision["villain"] == "Debt Titan" and axis != "rates"
@@ -351,7 +360,7 @@ def build_prompt(tier, plan, snapshot, decision, prev, canon) -> str:
         f"[마무리 형식] {decision['ending_type']} — {ending.get('guide', '')}\n"
         f"[비트 계약]\n{beats}\n"
         "[narration 규칙] 각 비트 한 문장. 해설과 캐릭터 대사(“…” 인용형)를 섞고 인용형은 2개 비트. "
-        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 34자 이하), "
+        "같은 회차 안에서 같은 문장 반복 금지. 지표 토큰은 1번 비트에만 1개(대입 후 30자 이하, 주간 지표 토큰이면 '이번 주' 포함 34자 이하), "
         "나머지 비트는 숫자·토큰 없이 24자 이하(낭독 시간 제한). 복선 회수(예고대로/예상 밖)는 2번 비트에. "
         "투자 권유·수익 보장·매수/매도 지시 금지. "
         "지어낸 수치 금지."
@@ -431,7 +440,15 @@ def check_beat(item: dict | None, snapshot: dict, allow_token: bool = True,
         resolved = market_facts.resolve(line, snapshot)
     except Exception as e:  # noqa: BLE001 — 사유 반환(위반 처리)
         return f"resolve_failed:{type(e).__name__}", None
-    if len(resolved) > (MAX_RESOLVED_CHARS if allow_token else MAX_PLAIN_CHARS):
+    # DN2026_0123 · R6-13: '이번 주'는 주간 누적 토큰과만, 34자도 그때만
+    week = allow_token and _is_week_token(line, snapshot)
+    has_token = bool(market_facts.TOKEN.search(line))
+    if has_token and week and not resolved.startswith(WEEK_PREFIX):
+        return "week_prefix_missing", None
+    if has_token and not week and WEEK_PREFIX in resolved:
+        return "week_prefix_on_daily", None
+    limit = (MAX_RESOLVED_WEEK_CHARS if week else MAX_RESOLVED_CHARS) if allow_token else MAX_PLAIN_CHARS
+    if len(resolved) > limit:
         return "narration_too_long", None
     if FORBIDDEN.search(resolved):
         return "forbidden_phrase", None
